@@ -164,6 +164,9 @@ function Studio() {
             <Link to="/recordings" className="px-3 py-1.5 rounded-md hover:bg-muted flex items-center gap-1.5">
               <Library className="h-4 w-4" /> Recordings
             </Link>
+            <Link to="/premiere" className="px-3 py-1.5 rounded-md hover:bg-muted flex items-center gap-1.5">
+              <Film className="h-4 w-4" /> Premiere
+            </Link>
           </nav>
         </div>
       </header>
