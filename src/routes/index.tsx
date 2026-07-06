@@ -361,6 +361,15 @@ function Dashboard() {
                     </div>
                     <Switch id="burn" checked={burnIn} onCheckedChange={setBurnIn} />
                   </div>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="lowperf">Low-performance mode</Label>
+                      <p className="text-xs text-muted-foreground">
+                        For weak PCs: 480p, ultrafast preset, 1 thread. ~2–3× schneller, kleineres Video.
+                      </p>
+                    </div>
+                    <Switch id="lowperf" checked={lowPerf} onCheckedChange={setLowPerf} />
+                  </div>
                 </div>
               )}
 
