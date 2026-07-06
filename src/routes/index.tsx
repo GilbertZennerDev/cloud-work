@@ -80,6 +80,8 @@ function Dashboard() {
   const [subbedBlob, setSubbedBlob] = useState<Blob | null>(null);
 
   const logRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const cancelledRef = useRef(false);
 
   const appendLog = useCallback((msg: string) => {
     setLogs((l) => {
