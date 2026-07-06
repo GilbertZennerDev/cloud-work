@@ -121,7 +121,7 @@ function Dashboard() {
         if (!durationInfo.ok) throw new Error(durationInfo.msg);
         const s = parseTimeToSeconds(start);
         const e = parseTimeToSeconds(end);
-        const cut = await cutVideo(file, s, e, setProgress);
+        const cut = await cutVideo(file, s, e, setProgress, { lowPerf });
         const clip = new Blob([cut as BlobPart], { type: "video/mp4" });
         setClipBlob(clip);
         workingVideo = clip;
