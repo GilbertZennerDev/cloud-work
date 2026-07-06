@@ -14,7 +14,51 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      recordings: {
+        Row: {
+          chunk_index: number
+          created_at: string
+          ended_at: string | null
+          error: string | null
+          id: string
+          session_date: string
+          size_bytes: number
+          source_url: string | null
+          started_at: string
+          status: string
+          storage_path: string
+          title: string | null
+        }
+        Insert: {
+          chunk_index?: number
+          created_at?: string
+          ended_at?: string | null
+          error?: string | null
+          id?: string
+          session_date: string
+          size_bytes?: number
+          source_url?: string | null
+          started_at: string
+          status?: string
+          storage_path: string
+          title?: string | null
+        }
+        Update: {
+          chunk_index?: number
+          created_at?: string
+          ended_at?: string | null
+          error?: string | null
+          id?: string
+          session_date?: string
+          size_bytes?: number
+          source_url?: string | null
+          started_at?: string
+          status?: string
+          storage_path?: string
+          title?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
