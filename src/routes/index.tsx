@@ -21,6 +21,7 @@ import { cutVideo, extractAudioMp3, burnSubtitles } from "@/lib/ffmpeg/operation
 import { onFfmpegLog, cancelFFmpeg } from "@/lib/ffmpeg/client";
 import { luxasrJsonToCues, cuesToSrt } from "@/lib/subtitles/luxasrToSrt";
 import { shortenCues } from "@/lib/subtitles/shortenSrt";
+import { RecorderCard } from "@/components/dashboard/RecorderCard";
 
 export const Route = createFileRoute("/")({
   head: () => ({
