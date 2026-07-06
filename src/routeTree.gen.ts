@@ -9,10 +9,23 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as StudioRouteImport } from './routes/studio'
+import { Route as RecordingsRouteImport } from './routes/recordings'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiHlsProxyRouteImport } from './routes/api/hls-proxy'
 import { Route as ApiAsrRouteImport } from './routes/api/asr'
+import { Route as ApiPublicHooksCleanupRecordingsRouteImport } from './routes/api/public/hooks/cleanup-recordings'
 
+const StudioRoute = StudioRouteImport.update({
+  id: '/studio',
+  path: '/studio',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RecordingsRoute = RecordingsRouteImport.update({
+  id: '/recordings',
+  path: '/recordings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -28,39 +41,90 @@ const ApiAsrRoute = ApiAsrRouteImport.update({
   path: '/api/asr',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicHooksCleanupRecordingsRoute =
+  ApiPublicHooksCleanupRecordingsRouteImport.update({
+    id: '/api/public/hooks/cleanup-recordings',
+    path: '/api/public/hooks/cleanup-recordings',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/recordings': typeof RecordingsRoute
+  '/studio': typeof StudioRoute
   '/api/asr': typeof ApiAsrRoute
   '/api/hls-proxy': typeof ApiHlsProxyRoute
+  '/api/public/hooks/cleanup-recordings': typeof ApiPublicHooksCleanupRecordingsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/recordings': typeof RecordingsRoute
+  '/studio': typeof StudioRoute
   '/api/asr': typeof ApiAsrRoute
   '/api/hls-proxy': typeof ApiHlsProxyRoute
+  '/api/public/hooks/cleanup-recordings': typeof ApiPublicHooksCleanupRecordingsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/recordings': typeof RecordingsRoute
+  '/studio': typeof StudioRoute
   '/api/asr': typeof ApiAsrRoute
   '/api/hls-proxy': typeof ApiHlsProxyRoute
+  '/api/public/hooks/cleanup-recordings': typeof ApiPublicHooksCleanupRecordingsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/asr' | '/api/hls-proxy'
+  fullPaths:
+    | '/'
+    | '/recordings'
+    | '/studio'
+    | '/api/asr'
+    | '/api/hls-proxy'
+    | '/api/public/hooks/cleanup-recordings'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/asr' | '/api/hls-proxy'
-  id: '__root__' | '/' | '/api/asr' | '/api/hls-proxy'
+  to:
+    | '/'
+    | '/recordings'
+    | '/studio'
+    | '/api/asr'
+    | '/api/hls-proxy'
+    | '/api/public/hooks/cleanup-recordings'
+  id:
+    | '__root__'
+    | '/'
+    | '/recordings'
+    | '/studio'
+    | '/api/asr'
+    | '/api/hls-proxy'
+    | '/api/public/hooks/cleanup-recordings'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  RecordingsRoute: typeof RecordingsRoute
+  StudioRoute: typeof StudioRoute
   ApiAsrRoute: typeof ApiAsrRoute
   ApiHlsProxyRoute: typeof ApiHlsProxyRoute
+  ApiPublicHooksCleanupRecordingsRoute: typeof ApiPublicHooksCleanupRecordingsRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/studio': {
+      id: '/studio'
+      path: '/studio'
+      fullPath: '/studio'
+      preLoaderRoute: typeof StudioRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/recordings': {
+      id: '/recordings'
+      path: '/recordings'
+      fullPath: '/recordings'
+      preLoaderRoute: typeof RecordingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -82,13 +146,23 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAsrRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/hooks/cleanup-recordings': {
+      id: '/api/public/hooks/cleanup-recordings'
+      path: '/api/public/hooks/cleanup-recordings'
+      fullPath: '/api/public/hooks/cleanup-recordings'
+      preLoaderRoute: typeof ApiPublicHooksCleanupRecordingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  RecordingsRoute: RecordingsRoute,
+  StudioRoute: StudioRoute,
   ApiAsrRoute: ApiAsrRoute,
   ApiHlsProxyRoute: ApiHlsProxyRoute,
+  ApiPublicHooksCleanupRecordingsRoute: ApiPublicHooksCleanupRecordingsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

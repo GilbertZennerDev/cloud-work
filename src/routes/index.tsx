@@ -1,5 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { createFileRoute, Link, useSearch, useNavigate } from "@tanstack/react-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { z } from "zod";
+import { getRecordingDownloadUrl } from "@/lib/recordings.functions";
+import { Radio, Library } from "lucide-react";
 import {
   CheckCircle2, Circle, Loader2, Upload, Download, Scissors,
   Music, Cloud, FileText, Type, Flame, Play, X,
@@ -23,7 +26,12 @@ import { luxasrJsonToCues, cuesToSrt } from "@/lib/subtitles/luxasrToSrt";
 import { shortenCues } from "@/lib/subtitles/shortenSrt";
 import { RecorderCard } from "@/components/dashboard/RecorderCard";
 
+const indexSearchSchema = z.object({
+  recording: z.string().uuid().optional(),
+});
+
 export const Route = createFileRoute("/")({
+  validateSearch: indexSearchSchema,
   head: () => ({
     meta: [
       { title: "Video Cutter & Auto-Subtitler Pro" },
@@ -91,7 +99,36 @@ const STAGES: { key: Stage; label: string; icon: typeof Circle }[] = [
 ];
 
 function Dashboard() {
+  const search = useSearch({ from: "/" });
+  const navigate = useNavigate();
   const [file, setFile] = useState<File | null>(null);
+  const [loadingRecording, setLoadingRecording] = useState<string | null>(null);
+
+  // If ?recording=<id> is present, fetch it and load into the pipeline.
+  useEffect(() => {
+    const id = search.recording;
+    if (!id || loadingRecording === id) return;
+    setLoadingRecording(id);
+    (async () => {
+      try {
+        toast.message("Loading recording…");
+        const { url, path } = await getRecordingDownloadUrl({ data: { id } });
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+        const blob = await res.blob();
+        const name = path.split("/").pop() ?? "recording.ts";
+        const f = new File([blob], name, { type: "video/mp2t" });
+        setFile(f);
+        toast.success(`Loaded ${(f.size / 1024 / 1024).toFixed(1)} MB`);
+      } catch (err) {
+        toast.error((err as Error).message);
+      } finally {
+        // Clear the search param so we don't re-load on rerender
+        navigate({ to: "/", search: {}, replace: true });
+      }
+    })();
+  }, [search.recording, loadingRecording, navigate]);
+
   const [start, setStart] = useState("00:00");
   const [end, setEnd] = useState("00:30");
   const [mode, setMode] = useState<Mode>("full");
@@ -345,6 +382,14 @@ function Dashboard() {
               </p>
             </div>
           </div>
+          <nav className="flex items-center gap-1 text-sm">
+            <Link to="/studio" className="px-3 py-1.5 rounded-md hover:bg-muted flex items-center gap-1.5">
+              <Radio className="h-4 w-4" /> Studio
+            </Link>
+            <Link to="/recordings" className="px-3 py-1.5 rounded-md hover:bg-muted flex items-center gap-1.5">
+              <Library className="h-4 w-4" /> Recordings
+            </Link>
+          </nav>
         </div>
       </header>
 
