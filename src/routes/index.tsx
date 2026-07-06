@@ -229,10 +229,17 @@ function Dashboard() {
       // Poll from the client so no single server request stays open for minutes.
       const startedAt = Date.now();
       const MAX_MS = 15 * 60 * 1000;
+      const STALL_MS = 3 * 60 * 1000;
       let asrResult: unknown = null;
+      let lastStatus = "";
+      let lastProgressAt = Date.now();
       while (true) {
         checkCancel();
-        if (Date.now() - startedAt > MAX_MS) throw new Error("LuxASR polling timed out");
+        if (Date.now() - startedAt > MAX_MS) throw new Error("LuxASR polling timed out (15 min)");
+        if (Date.now() - lastProgressAt > STALL_MS)
+          throw new Error(
+            `LuxASR stuck in "${lastStatus || "pending"}" for 3 min — aborting`,
+          );
         await new Promise((r) => setTimeout(r, 3000));
         checkCancel();
         const pollRes = await fetch(`/api/asr?jobId=${encodeURIComponent(jobId)}`, {
@@ -247,8 +254,13 @@ function Dashboard() {
           asrResult = p.result;
           break;
         }
-        appendLog(`[ASR] status: ${p.status}`);
+        if (p.status !== lastStatus) {
+          lastStatus = p.status;
+          lastProgressAt = Date.now();
+          appendLog(`[ASR] status: ${p.status}`);
+        }
       }
+
       const asrJson = { result: asrResult };
       appendLog("[ASR] Transcription received");
 
