@@ -186,11 +186,19 @@ function Studio() {
           <CardContent className="grid gap-3 md:grid-cols-3">
             <StatCard
               label={inSession ? "Session ends in" : "Next session"}
-              value={inSession ? formatDurationMs(untilEnd) : formatLuxTime(sessionWindow.start)}
+              value={
+                !mounted
+                  ? "—"
+                  : inSession
+                    ? formatDurationMs(untilEnd)
+                    : formatLuxTime(sessionWindow.start)
+              }
               hint={
-                inSession
-                  ? `Started ${formatLuxTime(inSession.start)}`
-                  : `Starts in ${formatDurationMs(untilStart)}`
+                !mounted
+                  ? " "
+                  : inSession
+                    ? `Started ${formatLuxTime(inSession.start)}`
+                    : `Starts in ${formatDurationMs(untilStart)}`
               }
               highlight={!!inSession}
             />
