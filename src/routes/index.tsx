@@ -137,7 +137,7 @@ function Dashboard() {
       // Stage 2: Audio
       setStage("extracting");
       setProgress(0);
-      const audioBytes = await extractAudioMp3(workingVideo, setProgress);
+      const audioBytes = await extractAudioMp3(workingVideo, setProgress, { lowPerf });
       const audio = new Blob([audioBytes as BlobPart], { type: "audio/mpeg" });
       setAudioBlob(audio);
       setProgress(1);
