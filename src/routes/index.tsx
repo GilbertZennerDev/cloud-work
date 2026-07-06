@@ -48,6 +48,38 @@ type Stage =
 
 type Mode = "full" | "cut-only" | "subs-only";
 
+/** Decode MP3 and check RMS. Returns true if the track is effectively silent. */
+async function isAudioSilent(blob: Blob, threshold = 0.005): Promise<boolean> {
+  try {
+    const AC: typeof AudioContext =
+      (window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext);
+    if (!AC) return false;
+    const ctx = new AC();
+    try {
+      const buf = await blob.arrayBuffer();
+      const decoded = await ctx.decodeAudioData(buf.slice(0));
+      if (decoded.length === 0) return true;
+      const data = decoded.getChannelData(0);
+      // Sample up to ~20k points for speed
+      const step = Math.max(1, Math.floor(data.length / 20000));
+      let sum = 0, n = 0;
+      for (let i = 0; i < data.length; i += step) {
+        const v = data[i];
+        sum += v * v;
+        n++;
+      }
+      const rms = Math.sqrt(sum / Math.max(1, n));
+      return rms < threshold;
+    } finally {
+      ctx.close().catch(() => {});
+    }
+  } catch {
+    // If decoding fails, treat as non-silent so the user still gets a transcription attempt.
+    return false;
+  }
+}
+
+
 const STAGES: { key: Stage; label: string; icon: typeof Circle }[] = [
   { key: "cutting", label: "Cutting", icon: Scissors },
   { key: "extracting", label: "Audio", icon: Music },
@@ -163,6 +195,16 @@ function Dashboard() {
       const audio = new Blob([audioBytes as BlobPart], { type: "audio/mpeg" });
       setAudioBlob(audio);
       setProgress(1);
+
+      // Detect silence / empty audio → skip ASR pipeline, offer clip only.
+      const silent = await isAudioSilent(audio);
+      if (silent) {
+        appendLog("[AUDIO] No audible content detected — skipping transcription");
+        toast.message("No audio detected — clip ready for download");
+        setStage("done");
+        return;
+      }
+
 
       // Stage 3: LuxASR
       setStage("asr");
