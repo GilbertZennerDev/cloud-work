@@ -66,6 +66,7 @@ function Dashboard() {
   const [maxSentences, setMaxSentences] = useState(2);
   const [maxChars, setMaxChars] = useState(90);
   const [burnIn, setBurnIn] = useState(true);
+  const [lowPerf, setLowPerf] = useState(false);
 
   const [stage, setStage] = useState<Stage>("idle");
   const [progress, setProgress] = useState(0);
@@ -120,7 +121,7 @@ function Dashboard() {
         if (!durationInfo.ok) throw new Error(durationInfo.msg);
         const s = parseTimeToSeconds(start);
         const e = parseTimeToSeconds(end);
-        const cut = await cutVideo(file, s, e, setProgress);
+        const cut = await cutVideo(file, s, e, setProgress, { lowPerf });
         const clip = new Blob([cut as BlobPart], { type: "video/mp4" });
         setClipBlob(clip);
         workingVideo = clip;
@@ -136,7 +137,7 @@ function Dashboard() {
       // Stage 2: Audio
       setStage("extracting");
       setProgress(0);
-      const audioBytes = await extractAudioMp3(workingVideo, setProgress);
+      const audioBytes = await extractAudioMp3(workingVideo, setProgress, { lowPerf });
       const audio = new Blob([audioBytes as BlobPart], { type: "audio/mpeg" });
       setAudioBlob(audio);
       setProgress(1);
@@ -177,7 +178,7 @@ function Dashboard() {
       if (burnIn) {
         setStage("burning");
         setProgress(0);
-        const subbed = await burnSubtitles(workingVideo, srt, fontSize, setProgress);
+        const subbed = await burnSubtitles(workingVideo, srt, fontSize, setProgress, { lowPerf });
         setSubbedBlob(new Blob([subbed as BlobPart], { type: "video/mp4" }));
         setProgress(1);
       }
@@ -359,6 +360,15 @@ function Dashboard() {
                       </p>
                     </div>
                     <Switch id="burn" checked={burnIn} onCheckedChange={setBurnIn} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="lowperf">Low-performance mode</Label>
+                      <p className="text-xs text-muted-foreground">
+                        For weak PCs: 480p, ultrafast preset, 1 thread. ~2–3× schneller, kleineres Video.
+                      </p>
+                    </div>
+                    <Switch id="lowperf" checked={lowPerf} onCheckedChange={setLowPerf} />
                   </div>
                 </div>
               )}

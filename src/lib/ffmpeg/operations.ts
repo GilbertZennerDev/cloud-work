@@ -2,11 +2,43 @@ import { fetchFile } from "@ffmpeg/util";
 import { getFFmpeg, onProgress, type ProgressCb } from "./client";
 import { formatSeconds } from "../subtitles/parseTime";
 
+export interface PerfOptions {
+  /** Optimise for weak hardware: ultrafast preset, higher CRF, downscale, single thread. */
+  lowPerf?: boolean;
+  /** Max video height when re-encoding (only used if lowPerf or explicitly set). */
+  maxHeight?: number;
+}
+
+function encodeArgs(perf: PerfOptions): string[] {
+  const preset = perf.lowPerf ? "ultrafast" : "veryfast";
+  const crf = perf.lowPerf ? "28" : "22";
+  return [
+    "-c:v", "libx264",
+    "-preset", preset,
+    "-crf", crf,
+    "-tune", "fastdecode",
+    "-pix_fmt", "yuv420p",
+  ];
+}
+
+function threadArgs(perf: PerfOptions): string[] {
+  // ffmpeg.wasm runs in a worker; keep threads low on weak machines to avoid OOM.
+  return perf.lowPerf ? ["-threads", "1"] : ["-threads", "2"];
+}
+
+function scaleFilter(perf: PerfOptions): string | null {
+  const h = perf.maxHeight ?? (perf.lowPerf ? 480 : 0);
+  if (!h) return null;
+  // Only downscale if source is larger; keep even dims for yuv420p.
+  return `scale='min(iw,trunc(oh*a/2)*2)':'min(${h},ih)':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2`;
+}
+
 export async function cutVideo(
   file: File | Blob,
   startSec: number,
   endSec: number,
   onP?: ProgressCb,
+  perf: PerfOptions = {},
 ): Promise<Uint8Array> {
   if (endSec <= startSec) throw new Error("End must be greater than start");
   const ffmpeg = await getFFmpeg();
@@ -16,7 +48,7 @@ export async function cutVideo(
   await ffmpeg.writeFile(inputName, await fetchFile(file));
   const duration = (endSec - startSec).toFixed(3);
   try {
-    // Try fast copy first
+    // Fast copy: no CPU cost, ideal for weak hardware.
     await ffmpeg.exec([
       "-ss", formatSeconds(startSec),
       "-i", inputName,
@@ -29,15 +61,19 @@ export async function cutVideo(
     return data as Uint8Array;
   } catch {
     // Re-encode fallback (keyframe-accurate)
-    await ffmpeg.exec([
+    const args = [
       "-ss", formatSeconds(startSec),
       "-i", inputName,
       "-t", duration,
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-      "-c:a", "aac", "-b:a", "128k",
+      ...encodeArgs(perf),
+      "-c:a", "aac", "-b:a", perf.lowPerf ? "96k" : "128k",
+      ...threadArgs(perf),
       "-movflags", "+faststart",
       "-y", outputName,
-    ]);
+    ];
+    const sf = scaleFilter(perf);
+    if (sf) args.splice(args.indexOf("-c:v"), 0, "-vf", sf);
+    await ffmpeg.exec(args);
     const data = await ffmpeg.readFile(outputName);
     return data as Uint8Array;
   } finally {
@@ -50,6 +86,7 @@ export async function cutVideo(
 export async function extractAudioMp3(
   file: File | Blob,
   onP?: ProgressCb,
+  perf: PerfOptions = {},
 ): Promise<Uint8Array> {
   const ffmpeg = await getFFmpeg();
   const off = onP ? onProgress(ffmpeg, onP) : () => {};
@@ -61,7 +98,10 @@ export async function extractAudioMp3(
       "-i", inputName,
       "-vn",
       "-ar", "16000", "-ac", "1",
-      "-c:a", "libmp3lame", "-q:a", "4",
+      // On weak hardware a slightly lower quality MP3 still transcribes fine
+      // and is 20-30% faster to encode.
+      "-c:a", "libmp3lame", "-q:a", perf.lowPerf ? "7" : "4",
+      ...threadArgs(perf),
       "-y", outputName,
     ]);
     const data = await ffmpeg.readFile(outputName);
@@ -95,6 +135,7 @@ export async function burnSubtitles(
   srtText: string,
   fontSize: number,
   onP?: ProgressCb,
+  perf: PerfOptions = {},
 ): Promise<Uint8Array> {
   const ffmpeg = await getFFmpeg();
   const off = onP ? onProgress(ffmpeg, onP) : () => {};
@@ -108,12 +149,17 @@ export async function burnSubtitles(
     `FontName=${FONT_FAMILY},FontSize=${fontSize},PrimaryColour=&HFFFFFF&,` +
     `OutlineColour=&H000000&,BorderStyle=1,Outline=2,Shadow=0,` +
     `Bold=1,Alignment=2,MarginV=40`;
+  const sf = scaleFilter(perf);
+  const vf = sf
+    ? `${sf},subtitles=${subsName}:fontsdir=/fonts:force_style='${style}'`
+    : `subtitles=${subsName}:fontsdir=/fonts:force_style='${style}'`;
   try {
     await ffmpeg.exec([
       "-i", inputName,
-      "-vf", `subtitles=${subsName}:fontsdir=/fonts:force_style='${style}'`,
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+      "-vf", vf,
+      ...encodeArgs(perf),
       "-c:a", "copy",
+      ...threadArgs(perf),
       "-movflags", "+faststart",
       "-y", outputName,
     ]);
