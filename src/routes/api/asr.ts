@@ -36,7 +36,7 @@ export const Route = createFileRoute("/api/asr")({
   server: {
     handlers: {
       // Submit a new job. Returns { jobId } quickly; client polls status.
-      POST: async ({ request }) => {
+      POST: async ({ request }: { request: Request }) => {
         try {
           const contentType = request.headers.get("content-type") ?? "audio/mpeg";
           const filename = request.headers.get("x-filename") ?? "audio.mp3";
@@ -52,7 +52,7 @@ export const Route = createFileRoute("/api/asr")({
         }
       },
       // Poll a job. ?jobId=... → { status } or { status:'completed', result }
-      GET: async ({ request }) => {
+      GET: async ({ request }: { request: Request }) => {
         try {
           const url = new URL(request.url);
           const jobId = url.searchParams.get("jobId");
@@ -78,4 +78,5 @@ export const Route = createFileRoute("/api/asr")({
       },
     },
   },
-});
+} as any);
+
