@@ -32,9 +32,8 @@ async function submitJob(bytes: ArrayBuffer, contentType: string, filename: stri
 }
 
 async function pollJob(jobId: string): Promise<"completed"> {
-  const key = process.env.LUXASR_API_KEY;
   const headers: Record<string, string> = {};
-  if (key) headers["Authorization"] = `Bearer ${key}`;
+
   const started = Date.now();
   while (Date.now() - started < MAX_POLL_MS) {
     const res = await fetch(`${LUXASR_BASE}/v3/asr/jobs/${jobId}`, { headers });
