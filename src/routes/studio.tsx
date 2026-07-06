@@ -84,8 +84,6 @@ function Studio() {
   const sessionWindow = useMemo(() => nextSessionWindow(now), [now]);
   const inSession = useMemo(() => (mounted ? isInSession(now) : null), [mounted, now]);
 
-  const sessionWindow = useMemo(() => nextSessionWindow(now), [now]);
-  const inSession = useMemo(() => isInSession(now), [now]);
 
   const startNow = useCallback(
     (sessionDate: string) => {
