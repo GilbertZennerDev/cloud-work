@@ -77,14 +77,20 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
-      { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { title: "Video Cutter & Auto-Subtitler Pro" },
+      {
+        name: "description",
+        content:
+          "Cut videos in your browser and auto-generate Luxembourgish subtitles with LuxASR.",
+      },
+      { property: "og:title", content: "Video Cutter & Auto-Subtitler Pro" },
+      {
+        property: "og:description",
+        content:
+          "Browser-based video cutter with Luxembourgish auto-subtitles (LuxASR).",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:site", content: "@Lovable" },
     ],
     links: [
       {
