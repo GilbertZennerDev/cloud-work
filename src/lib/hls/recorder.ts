@@ -114,7 +114,7 @@ export async function startRecording(playlistUrl: string): Promise<RecorderHandl
       stopped = true;
       ac.abort();
       // Assemble MPEG-TS blob
-      const parts: BlobPart[] = chunks.map((u) => u);
+      const parts: BlobPart[] = chunks.map((u) => u as BlobPart);
       return new Blob(parts, { type: "video/mp2t" });
     },
   };
