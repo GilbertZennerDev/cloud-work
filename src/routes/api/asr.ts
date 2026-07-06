@@ -57,14 +57,16 @@ export const Route = createFileRoute("/api/asr")({
           const url = new URL(request.url);
           const jobId = url.searchParams.get("jobId");
           if (!jobId) return jsonError("Missing jobId", 400);
-          const statusRes = await fetch(`${LUXASR_BASE}/v3/asr/jobs/${jobId}`);
+          if (!/^[a-zA-Z0-9_-]{1,64}$/.test(jobId)) return jsonError("Invalid jobId", 400);
+          const safeJobId = encodeURIComponent(jobId);
+          const statusRes = await fetch(`${LUXASR_BASE}/v3/asr/jobs/${safeJobId}`);
           if (!statusRes.ok)
             return jsonError(`Poll failed: ${statusRes.status}`, 502);
           const j = (await statusRes.json()) as { status?: string; error?: string };
           if (j.status === "failed")
             return jsonError(`LuxASR job failed: ${j.error ?? ""}`, 502);
           if (j.status !== "completed") return Response.json({ status: j.status ?? "pending" });
-          const resultRes = await fetch(`${LUXASR_BASE}/v3/asr/jobs/${jobId}/result`);
+          const resultRes = await fetch(`${LUXASR_BASE}/v3/asr/jobs/${safeJobId}/result`);
           if (!resultRes.ok)
             return jsonError(`Result fetch failed: ${resultRes.status}`, 502);
           const result = await resultRes.json();
