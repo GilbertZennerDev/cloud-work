@@ -66,6 +66,7 @@ function Dashboard() {
   const [maxSentences, setMaxSentences] = useState(2);
   const [maxChars, setMaxChars] = useState(90);
   const [burnIn, setBurnIn] = useState(true);
+  const [lowPerf, setLowPerf] = useState(false);
 
   const [stage, setStage] = useState<Stage>("idle");
   const [progress, setProgress] = useState(0);
