@@ -366,10 +366,34 @@ function Dashboard() {
                     <div>
                       <Label htmlFor="lowperf">Low-performance mode</Label>
                       <p className="text-xs text-muted-foreground">
-                        For weak PCs: 480p, ultrafast preset, 1 thread. ~2–3× schneller, kleineres Video.
+                        For weak PCs: ultrafast preset, 1 thread. ~2–3× schneller.
                       </p>
                     </div>
                     <Switch id="lowperf" checked={lowPerf} onCheckedChange={setLowPerf} />
+                  </div>
+                  <div>
+                    <Label>Output resolution</Label>
+                    <p className="text-xs text-muted-foreground mb-2">
+                      Kleiner = deutlich schneller beim Burn-in. Auch im Low-perf Modus wählbar.
+                    </p>
+                    <div className="grid grid-cols-4 gap-2">
+                      {([
+                        { v: 0 as const, label: "Source" },
+                        { v: 480 as const, label: "480p" },
+                        { v: 720 as const, label: "720p" },
+                        { v: 1080 as const, label: "1080p" },
+                      ]).map((o) => (
+                        <Button
+                          key={o.v}
+                          type="button"
+                          size="sm"
+                          variant={maxHeight === o.v ? "default" : "outline"}
+                          onClick={() => setMaxHeight(o.v)}
+                        >
+                          {o.label}
+                        </Button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
