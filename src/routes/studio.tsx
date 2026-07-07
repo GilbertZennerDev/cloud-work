@@ -60,7 +60,6 @@ function StudioError({ error, reset }: { error: Error; reset: () => void }) {
 }
 
 function Studio() {
-  const navigate = useNavigate();
   const [url, setUrl] = useState(DEFAULT_URL);
   const [autoMode, setAutoMode] = useState(true);
   const [logs, setLogs] = useState<string[]>([]);
