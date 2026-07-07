@@ -368,7 +368,31 @@ function Dashboard() {
     [subbedBlob],
   );
 
-  return (
+  const sourcePreviewUrl = useMemo(
+    () => (file ? URL.createObjectURL(file) : null),
+    [file],
+  );
+  useEffect(() => {
+    return () => {
+      if (sourcePreviewUrl) URL.revokeObjectURL(sourcePreviewUrl);
+    };
+  }, [sourcePreviewUrl]);
+
+  const startVideoRef = useRef<HTMLVideoElement>(null);
+  const endVideoRef = useRef<HTMLVideoElement>(null);
+  const seekTo = (ref: React.RefObject<HTMLVideoElement | null>, timeStr: string) => {
+    const v = ref.current;
+    if (!v) return;
+    try {
+      const t = parseTimeToSeconds(timeStr);
+      if (isFinite(t) && t >= 0) {
+        v.currentTime = Math.min(t, v.duration || t);
+        v.play().catch(() => {});
+      }
+    } catch { /* ignore */ }
+  };
+
+
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b">
         <div className="mx-auto max-w-7xl px-6 py-4 flex items-center justify-between">
