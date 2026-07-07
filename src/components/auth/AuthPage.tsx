@@ -96,26 +96,19 @@ export function AuthPage() {
                 type="password"
                 required
                 minLength={6}
-                autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
             <Button type="submit" className="w-full" disabled={busy !== null}>
               {busy === "email" && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              {mode === "signin" ? "Sign in" : "Create account"}
+              Sign in
             </Button>
           </form>
 
           <p className="text-center text-xs text-muted-foreground">
-            {mode === "signin" ? "No account yet?" : "Already have an account?"}{" "}
-            <button
-              type="button"
-              className="underline text-foreground"
-              onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
-            >
-              {mode === "signin" ? "Create one" : "Sign in"}
-            </button>
+            Forgot your password? Ask your administrator to send you a reset link.
           </p>
         </CardContent>
       </Card>
