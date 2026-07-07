@@ -1025,7 +1025,7 @@ function Dashboard() {
             </CardHeader>
             <CardContent className="space-y-3">
               <p className="text-xs text-muted-foreground">
-                Grab the last <b>N seconds</b> of any HLS live stream and save it straight to <b>Recordings</b> — no need to open Studio. Load it from the Recordings tab afterwards to cut it.
+                Saves everything the shared recorder has buffered <b>since it started</b> (or since your last snapshot) straight to <b>Recordings</b>. Uses the same stream URL as Studio — no need to open the Studio tab.
               </p>
               <div className="space-y-1.5">
                 <Label htmlFor="snap-url">HLS playlist URL</Label>
@@ -1037,22 +1037,21 @@ function Dashboard() {
                   placeholder="https://…/playlist.m3u8"
                 />
               </div>
-              <div className="grid grid-cols-[1fr_auto] gap-2 items-end">
-                <div className="space-y-1.5">
-                  <Label htmlFor="snap-secs">Duration (seconds)</Label>
-                  <Input
-                    id="snap-secs"
-                    type="number"
-                    min={5}
-                    max={300}
-                    value={snapshotSeconds}
-                    onChange={(e) => setSnapshotSeconds(Math.max(5, Math.min(300, Number(e.target.value) || 30)))}
-                    disabled={snapshotBusy}
-                  />
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs text-muted-foreground font-mono">
+                  {sharedInfo && sharedInfo.url === snapshotUrl ? (
+                    <>
+                      ● Buffered: {sharedInfo.bufferedSegments - sharedInfo.cursor} new segment
+                      {sharedInfo.bufferedSegments - sharedInfo.cursor === 1 ? "" : "s"} · since{" "}
+                      {sharedInfo.startedAt.toLocaleTimeString()}
+                    </>
+                  ) : (
+                    <>○ Recorder idle — first snapshot will start it</>
+                  )}
                 </div>
                 <Button onClick={runSnapshot} disabled={snapshotBusy || !snapshotUrl}>
                   {snapshotBusy ? (
-                    <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Capturing…</>
+                    <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Saving…</>
                   ) : (
                     <><Camera className="h-4 w-4 mr-2" /> Snapshot</>
                   )}
