@@ -346,6 +346,18 @@ function Dashboard() {
       if (cues.length === 0) throw new Error("LuxASR returned no segments");
       let workingCues = cues;
 
+      // Persist FULL transcript with timestamps to the recording row (if loaded from library).
+      if (recordingId) {
+        try {
+          await saveRecordingTranscript({
+            data: { id: recordingId, cues, srt: cuesToSrt(cues) },
+          });
+          appendLog(`[DB] Saved full transcript (${cues.length} segments) to recording`);
+        } catch (e) {
+          appendLog(`[DB] Failed to save transcript: ${(e as Error).message}`);
+        }
+      }
+
       // Stage 5: Shorten
       setStage("shortening");
       workingCues = shortenCues(cues, { maxSentences, maxChars });
