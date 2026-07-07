@@ -123,7 +123,7 @@ function Studio() {
   const copyToCutter = useCallback(async () => {
     const h = handleRef.current;
     if (!h || copying) return;
-    const snap = h.snapshotCurrent();
+    const snap = await h.snapshotCurrent();
     if (!snap || snap.blob.size === 0) {
       toast.error("Nothing recorded yet — wait a few seconds for the first segment");
       return;

@@ -43,17 +43,44 @@ export async function remuxTsToMp4(
   const inputName = "input.ts";
   const outputName = "input.mp4";
   await ffmpeg.writeFile(inputName, await fetchFile(file));
+  const tryExec = async (args: string[]) => {
+    await ffmpeg.exec(args);
+    return (await ffmpeg.readFile(outputName)) as Uint8Array;
+  };
   try {
-    await ffmpeg.exec([
-      "-fflags", "+genpts",
-      "-i", inputName,
-      "-c", "copy",
-      "-bsf:a", "aac_adtstoasc",
-      "-movflags", "+faststart",
-      "-y", outputName,
-    ]);
-    const data = await ffmpeg.readFile(outputName);
-    return data as Uint8Array;
+    // First attempt: copy both streams, apply AAC ADTS→ASC when audio is AAC.
+    try {
+      return await tryExec([
+        "-fflags", "+genpts",
+        "-i", inputName,
+        "-c", "copy",
+        "-bsf:a", "aac_adtstoasc",
+        "-movflags", "+faststart",
+        "-y", outputName,
+      ]);
+    } catch {
+      // Second attempt: copy both streams without the ADTS filter (audio may
+      // already be in a container-friendly form, or the container has no audio).
+      try {
+        return await tryExec([
+          "-fflags", "+genpts",
+          "-i", inputName,
+          "-c", "copy",
+          "-movflags", "+faststart",
+          "-y", outputName,
+        ]);
+      } catch {
+        // Last resort: video-only remux (some HLS variants ship no audio at all).
+        return await tryExec([
+          "-fflags", "+genpts",
+          "-i", inputName,
+          "-map", "0:v:0",
+          "-c", "copy",
+          "-movflags", "+faststart",
+          "-y", outputName,
+        ]);
+      }
+    }
   } finally {
     off();
     try { await ffmpeg.deleteFile(inputName); } catch {}
