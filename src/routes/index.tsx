@@ -421,6 +421,29 @@ function Dashboard() {
     const ac = new AbortController();
     abortRef.current = ac;
     const checkCancel = () => { if (cancelledRef.current) throw new Error("Cancelled"); };
+
+    // Fast path: reuse the stored full transcript, just re-shorten.
+    if (rawCues.length > 0) {
+      try {
+        setStage("shortening");
+        const shortened = shortenCues(rawCues, { maxSentences, maxChars });
+        setCues(shortened);
+        setSrtText(cuesToSrt(shortened));
+        appendLog(`[CUES] Reused stored transcript → ${shortened.length} blocks`);
+        setStage("done");
+        toast.success(`${shortened.length} subtitle blocks (from saved transcript)`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        appendLog(`[ERROR] ${message}`);
+        setError(message);
+        setStage("error");
+        toast.error(message);
+      } finally {
+        abortRef.current = null;
+      }
+      return;
+    }
+
     try {
       setStage("extracting");
       setProgress(0);
