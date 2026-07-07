@@ -28,6 +28,17 @@ const MarkFailedInput = z.object({
 
 const IdInput = z.object({ id: z.string().uuid() });
 
+const SaveTranscriptInput = z.object({
+  id: z.string().uuid(),
+  cues: z.array(z.object({
+    index: z.number().int().nonnegative().optional(),
+    start: z.number(),
+    end: z.number(),
+    text: z.string(),
+  })),
+  srt: z.string(),
+});
+
 /** Create a DB row for a new chunk and return a signed upload URL for it. */
 export const createRecording = createServerFn({ method: "POST" })
   .inputValidator((input) => CreateInput.parse(input))
