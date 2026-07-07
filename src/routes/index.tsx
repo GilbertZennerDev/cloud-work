@@ -513,6 +513,16 @@ function Dashboard() {
     } catch { /* ignore */ }
   };
 
+  // Reseek previews when the active segment changes.
+  useEffect(() => {
+    if (!sourcePreviewUrl) return;
+    seekTo(startVideoRef, segments[activeSeg].start);
+    seekTo(endVideoRef, segments[activeSeg].end);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSeg, sourcePreviewUrl]);
+
+
+
   return (
 
 
