@@ -239,11 +239,11 @@ function RecordingsPage() {
                       #{String(r.chunk_index).padStart(3, "0")}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-mono truncate">
-                        {formatTimeRange(r.started_at, r.ended_at)}
+                      <div className="text-sm font-medium truncate">
+                        {r.title ?? r.storage_path.split("/").pop()}
                       </div>
-                      <div className="text-xs text-muted-foreground">
-                        {formatBytes(r.size_bytes)}
+                      <div className="text-xs font-mono text-muted-foreground truncate">
+                        {formatTimeRange(r.started_at, r.ended_at)} · {formatBytes(r.size_bytes)}
                         {r.error && <span className="text-destructive"> · {r.error}</span>}
                       </div>
                     </div>
