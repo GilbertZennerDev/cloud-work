@@ -119,7 +119,9 @@ export interface RecordingRow {
   transcript: Array<{ index?: number; start: number; end: number; text: string }> | null;
   transcript_srt: string | null;
   transcribed_at: string | null;
+  full_copy: boolean;
 }
+
 
 export const listRecordings = createServerFn({ method: "GET" }).handler(
   async (): Promise<RecordingRow[]> => {
