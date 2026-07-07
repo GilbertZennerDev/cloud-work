@@ -381,7 +381,17 @@ function RecordingsPage() {
         </DialogContent>
       </Dialog>
 
+      {transcriptFor && (
+        <TranscriptEditor
+          recordingId={transcriptFor.id}
+          title={transcriptFor.title}
+          open={true}
+          onClose={() => setTranscriptFor(null)}
+          onSaved={() => qc.invalidateQueries({ queryKey: ["recordings"] })}
+        />
+      )}
     </div>
+
   );
 }
 
