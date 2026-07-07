@@ -453,6 +453,17 @@ function Dashboard() {
       setCues(shortened);
       setSrtText(cuesToSrt(shortened));
       appendLog(`[CUES] ${shortened.length} blocks ready — pick your cut points below`);
+      // Persist FULL transcript with timestamps to the recording row (if loaded from library).
+      if (recordingId) {
+        try {
+          await saveRecordingTranscript({
+            data: { id: recordingId, cues: raw, srt: cuesToSrt(raw) },
+          });
+          appendLog(`[DB] Saved full transcript (${raw.length} segments) to recording`);
+        } catch (e) {
+          appendLog(`[DB] Failed to save transcript: ${(e as Error).message}`);
+        }
+      }
       setStage("done");
       toast.success(`${shortened.length} subtitle blocks — click a block to set start/end`);
     } catch (err) {
