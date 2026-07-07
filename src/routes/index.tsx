@@ -1,7 +1,8 @@
 import { createFileRoute, Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
-import { getRecordingDownloadUrl, saveRecordingTranscript } from "@/lib/recordings.functions";
+import { getRecordingDownloadUrl, saveRecordingTranscript, createRecording, markRecordingReady } from "@/lib/recordings.functions";
+import { supabase } from "@/integrations/supabase/client";
 import { Radio, Library, Film, Camera } from "lucide-react";
 import {
   CheckCircle2, Circle, Loader2, Upload, Download, Scissors,
@@ -272,8 +273,8 @@ function Dashboard() {
         }
       });
       const secs = Math.max(5, Math.min(300, snapshotSeconds));
-      // Wait until we have at least some bytes or we hit the target duration.
       const started = Date.now();
+      const startedAt = new Date();
       while (Date.now() - started < secs * 1000) {
         await new Promise((r) => setTimeout(r, 500));
       }
@@ -281,25 +282,37 @@ function Dashboard() {
       const tsBlob = await handle.stop();
       handle = null;
       if (tsBlob.size === 0) throw new Error("No bytes captured — check the URL");
-      setSnapshotProgress(`Remuxing ${(tsBlob.size / 1024 / 1024).toFixed(1)} MB to MP4…`);
-      const mp4 = await remuxTsToMp4(tsBlob);
-      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-      const name = `live-snapshot_${stamp}.mp4`;
-      const f = new File([mp4 as BlobPart], name, { type: "video/mp4" });
-      setFile(f);
-      setSourceTitle(`Live snapshot · ${new Date().toLocaleTimeString()}`);
-      setRecordingId(null);
-      setRawCues([]);
-      setCues([]);
-      setSelectedCues(new Set());
-      setSrtText(null);
-      setClipBlob(null);
-      setAudioBlob(null);
-      setSubbedBlob(null);
-      setSourcePreviewBlob(null);
-      setSourcePreviewError(null);
-      handledRecordingRef.current = null;
-      toast.success(`Loaded ${(f.size / 1024 / 1024).toFixed(1)} MB of live footage`, { id: t });
+
+      setSnapshotProgress(`Uploading ${(tsBlob.size / 1024 / 1024).toFixed(1)} MB to Recordings…`);
+      const sessionDate = startedAt.toISOString().slice(0, 10);
+      const chunkIndex = 9000 + (Math.floor(Date.now() / 1000) % 100000);
+      const created = await createRecording({
+        data: {
+          sessionDate,
+          chunkIndex,
+          startedAt: startedAt.toISOString(),
+          sourceUrl: snapshotUrl,
+          title: `Live snapshot ${new Date().toLocaleTimeString()}`,
+          fileExt: "ts",
+        },
+      });
+      const { error } = await supabase.storage
+        .from("recordings")
+        .uploadToSignedUrl(created.path, created.token, tsBlob, {
+          contentType: "video/mp2t",
+        });
+      if (error) throw error;
+      await markRecordingReady({
+        data: {
+          id: created.id,
+          endedAt: new Date().toISOString(),
+          sizeBytes: tsBlob.size,
+        },
+      });
+      toast.success(
+        `Snapshot saved to Recordings (${(tsBlob.size / 1024 / 1024).toFixed(1)} MB)`,
+        { id: t, duration: 6000 },
+      );
     } catch (err) {
       toast.error(`Snapshot failed: ${(err as Error).message}`, { id: t });
     } finally {
@@ -987,7 +1000,7 @@ function Dashboard() {
             </CardHeader>
             <CardContent className="space-y-3">
               <p className="text-xs text-muted-foreground">
-                Grab the last <b>N seconds</b> of any HLS live stream directly into <b>Source video</b> — no need to record via Studio first.
+                Grab the last <b>N seconds</b> of any HLS live stream and save it straight to <b>Recordings</b> — no need to open Studio. Load it from the Recordings tab afterwards to cut it.
               </p>
               <div className="space-y-1.5">
                 <Label htmlFor="snap-url">HLS playlist URL</Label>
