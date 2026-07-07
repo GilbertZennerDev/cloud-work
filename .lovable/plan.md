@@ -1,88 +1,81 @@
+## Ziel
+Multi-Tenant Modus mit Gruppen (Mandanten). Nur du (zennergilbert@gmail.com) hast als Super-Admin Zugriff auf ein Admin-Panel, um Gruppen und deren User zu verwalten. Jede Gruppe sieht nur ihre eigenen Aufnahmen. Alle User einer Gruppe haben identische Rechte auf deren Inhalte.
 
-## Scope (Prioritéiten)
+## Datenmodell (Datenbank)
 
-5 Punkten aus der Lëscht:
+Neue Tabellen:
+- `groups` — Name, Slug, Notizen, aktiv/inaktiv
+- `group_members` — verknüpft `auth.users` mit `groups`; ein User gehört zu genau einer Gruppe (Unique-Constraint auf user_id)
+- `app_roles` (Enum: `super_admin`)
+- `user_roles` — Super-Admin-Rollen (nur für dich); getrennte Tabelle, um Privilege Escalation zu verhindern
 
-1. Authentifikatioun (Email + Passwuert + Google) — shared workspace, keng per-user Daten
-2. Studio UI freeze wärend Opnahm leeft
-3. Transcription: Erof-/Eroplueden + Timestamps an Text upassen
-4. Snapshot-Kn€äppchen um Cutter Tab → hëlt Live-Snapshot als Source Video
-5. Parallel eng komplett Kopie vum ganze Stream mat lafen loossen
+Bestehende Tabelle `recordings`:
+- Neue Spalte `group_id uuid` (Foreign Key auf `groups`)
+- Alle bestehenden Zeilen werden anhand des `user_id` in eine passende Gruppe migriert (bzw. gelöscht, falls keine — Tabelle ist aktuell leer laut vorheriger Prüfung)
 
-D'aner Punkten (Ënnertitel-Position, Bord dënn, Nimm vun uploads upassen, batch delete, ganzen Video ouni Ënnertitel, Audio um Sekonn verréckelen, aner Sallen fannen) bleiwen fir spéider.
+Security-Definer-Funktionen:
+- `is_super_admin(uid)` — prüft `user_roles`
+- `current_group_id(uid)` — liefert die Gruppe des Users
+- `has_group_access(uid, group_id)` — true wenn User Mitglied ODER Super-Admin
 
----
+## RLS-Policies (überarbeitet)
 
-## 1. Auth (Email + Google, shared workspace)
+`recordings`:
+- SELECT/INSERT/UPDATE/DELETE: erlaubt wenn `has_group_access(auth.uid(), group_id)`
+- Beim Insert wird `group_id` automatisch per Trigger aus `group_members` gesetzt (kein Client-Input)
+- Super-Admin sieht alles
 
-Kee `profiles` Tabell — jidderee gesäit dee selwechte Recordings-Datebank (shared workspace).
+`groups`, `group_members`, `user_roles`:
+- Nur Super-Admin kann verwalten
+- User dürfen ihre eigene Gruppenzugehörigkeit lesen
 
-- Configure Supabase: enable Email/Password, keng auto-confirm, enable Google via `configure_social_auth` (managed Lovable OAuth).
-- Neie public Route `src/routes/auth.tsx`: Sign-in / Sign-up Form + Google-Kn€äppchen (over `lovable.auth.signInWithOAuth("google", { redirect_uri: window.location.origin })`).
-- Managed protected layout `src/routes/_authenticated/route.tsx` (auto-generéiert, `ssr:false`) — mir schaffen näischt dorunner.
-- All existent app-Routen (`/`, `/studio`, `/recordings`, `/premiere`) ënner `_authenticated/` réckelen. Public bleiwen `/auth` an d'webhook-Routen `/api/public/*`.
-- Root Route: `onAuthStateChange` Listener registréieren (SIGNED_IN/OUT/USER_UPDATED → `router.invalidate()` + Query-Cache invalidatioun).
-- Header/Nav: Sign-out Kn€äppchen mat propperer Cache-Teardown (`cancelQueries` → `clear` → `signOut` → `navigate("/auth", replace:true)`).
-- `src/start.ts`: sécher dass Bearer-Middleware ugehaang ass (fir authentifiéiert serverFns).
+`storage.objects` (Bucket `recordings`):
+- Pfad wird von `{user_id}/...` auf `{group_id}/...` umgestellt
+- Policies erlauben Zugriff wenn `has_group_access` auf den group_id-Präfix zutrifft
 
-Recording-serverFns kréien `.middleware([requireSupabaseAuth])` fir dass n€ëmmen ageloggt User schreiwen/lauschtere kënnen. RLS Policies um `recordings` Tabell: `authenticated` däerf alles, `anon` näischt.
+## Super-Admin-Bootstrap
 
-## 2. Studio freeze wärend Opnahm
+Trigger auf `auth.users`: Wenn eine bestätigte E-Mail exakt `zennergilbert@gmail.com` ist, wird automatisch die `super_admin`-Rolle vergeben (nur für verifizierte E-Mails, wie in der Security-Guidance beschrieben).
 
-Am `src/routes/studio.tsx`:
-- Wann `isRecording === true`, disabléieren:
-  - URL Input Feld
-  - "Ophuelen" / "Setup" Kn€äppchen wéi Start/Sender-Auswiel
-  - Preview interval Setting
-- N€ëmme "Stop" a "Snapshot" bleiwen enabled.
-- Visuell Indikator (roude Punkt + "OPNAHM LEEFT") am Header vun der Studio-Kaart.
-- Kee Route-Wechsel-Blocker — user kann d'Säit verloossen, mais UI-Controls sinn agefruer.
+## Server-Funktionen (neu, `src/lib/admin.functions.ts`)
 
-## 3. Transcription Editor
+Alle mit `requireSupabaseAuth` + Super-Admin-Check:
+- `listGroups`, `createGroup`, `updateGroup`, `deleteGroup`
+- `listGroupMembers(groupId)`
+- `inviteUserToGroup(email, groupId)` — legt User via Auth Admin API an (mit temporärem Passwort oder Magic Link), fügt zu `group_members` hinzu
+- `removeUserFromGroup(userId)`
+- `resetUserPassword(userId)` — sendet Reset-Mail
 
-Neit Panel um Recordings Tab (oder Modal) fir eng gewielt Opnahm:
+Diese laden `supabaseAdmin` erst innerhalb des Handlers (nach dem Rollen-Check), gemäß Server-Function-Regeln.
 
-**Eroflueden:** existent (SRT Download). Format-Kn€äppchen fir SRT an VTT (VTT = kleng conv).
+## Registrierung
 
-**Eroplueden:** File-Input akzeptéiert `.srt`; parse zu Cues; iwwerschreiwt Transcript vun der Opnahm iwwer `saveRecordingTranscript` serverFn.
+Public Signup wird deaktiviert. User können sich nur einloggen — Accounts werden ausschließlich vom Super-Admin im Admin-Panel angelegt. Google-Login bleibt aktiv, aber der Google-User muss vom Admin vorher zu einer Gruppe hinzugefügt worden sein; sonst zeigt die App "Kein Zugriff — bitte Admin kontaktieren".
 
-**Editéieren:** Lëscht vun de Cues mat:
-- Zwee Zäit-Inputs (start/end in `mm:ss.mmm`)
-- Textarea fir Text
-- Späichere-Kn€äppchen → rufft `saveRecordingTranscript` op mat komplett rekonstruéiertem SRT.
-- Split/Merge/Delete Cue Actions (optional; einfach Delete + neie Cue tëschendran).
+## UI
 
-Neie File `src/lib/subtitles/parseSrt.ts` fir SRT → `SrtCue[]`.
+Neue Route `src/routes/admin.tsx` (nur für Super-Admin sichtbar/erreichbar):
+- Sektion **Gruppen**: Liste, anlegen, umbenennen, löschen
+- Sektion **Detailansicht Gruppe**: Mitglieder-Liste, neuen User per E-Mail hinzufügen (Passwort/Email-Invite), User entfernen, Passwort-Reset-Mail senden
+- Sektion **Aufnahmen pro Gruppe** (optional): Übersicht wie viele Recordings pro Gruppe
 
-## 4. Snapshot Kn€äppchen um Cutter
+Header/Nav:
+- Admin-Link erscheint nur für Super-Admin
+- Für normale User in einer Gruppe: unveränderte UX
+- Für eingeloggte User **ohne** Gruppenzugehörigkeit: Sperrbildschirm "Warte auf Freischaltung durch Admin"
 
-Am `src/routes/index.tsx` (Cutter):
-- Nieft der Source-Video Zone: URL-Input + "Snapshot vum Live-Stream" Kn€äppchen.
-- Klick → benotzt existent HLS Recorder (`src/lib/hls/recorder.ts`) fir e kuerze Snapshot (z.B. lescht 30s vum Live-Playlist) ze zéien, remuxéiert direkt zu MP4 iwwer `remuxTsToMp4`, an lued et an d'Source Video Slot — genau esou wéi wann e Recording iwwer "Cut" gelueden ass.
-- Kee Späicheren an d'Datebank; direkt am Browser benotzt.
-- Ládebalken/Progress wärend d'Playlist gepollt an remuxéiert gëtt.
+`AuthPage`: "Create account"-Tab wird entfernt/deaktiviert; nur Sign-In (Email + Google).
 
-## 5. Parallel komplett Kopie vum Stream
+## Migration bestehender Daten
+- `recordings`-Tabelle ist aktuell leer → keine Datenmigration nötig
+- Storage-Bucket wird geleert (keine relevanten Objekte vorhanden)
 
-Am `src/lib/hls/scheduled-recorder.ts` (oder Studio Level):
-- Nieft de "Chunk"-Recordings (déi elo scho geschnidde no Zäit-Slots opgeholl gi) leeft e **zweeten Recorder** op der selwechter Playlist, ouni Chunk-Grenzen — sammelt all Segmenter vun Start bis Stop an eng eenzeg Datei.
-- Beim `stop()` gëtt dës komplett Datei och an de `recordings` Bucket geluede mat `chunk_index = -1` (oder neie `is_full_copy` boolean; simpler: `title = "Full session"` + `chunk_index = -1`).
-- UI: neie Toggle "Voll Kopie vum Stream mat opzehuelen" am Studio Setup, default un.
+## Sicherheitsprinzipien
+- Rollen in separater `user_roles`-Tabelle (nicht auf Profil)
+- `has_role`/`is_super_admin` als SECURITY DEFINER, um Rekursion zu vermeiden
+- Super-Admin-Zuweisung nur bei verifizierter Zieldomain/E-Mail
+- Alle Admin-Server-Funktionen prüfen den Aufrufer serverseitig
+- Storage-Pfade und Recordings via `group_id`, nicht `user_id`
 
-Kee separate ffmpeg-Aarbecht — mir concatenéieren TS-Segmenter genau wéi d'Chunks, just ouni ze rotéieren.
-
----
-
-## Technesch Notzen (fir Devs)
-
-- Migratioun: RLS Policies um `recordings`, plus `GRANT ... TO authenticated`, `REVOKE ... FROM anon`.
-- Bestehend Recordings bleiwen sichtbar (kee `user_id` Filter).
-- Google OAuth: `redirect_uri: window.location.origin` (public route), no Session-Hydratatioun `navigate` op `/` (Cutter).
-- Studio-Route ass elo protected → `/_authenticated/studio.tsx`; File-Bewegung upassen an all internen Linken (`<Link to="/studio">` bleift datselwecht Pfad, nëmmen d'Datei réckelt).
-
-## Files am Fokus
-
-- neit: `src/routes/auth.tsx`, `src/lib/subtitles/parseSrt.ts`, `src/components/recordings/TranscriptEditor.tsx`
-- geännert: `src/routes/__root.tsx` (onAuthStateChange + Nav mat Sign-out), `src/routes/studio.tsx` (freeze), `src/routes/index.tsx` (Snapshot Kn€äppchen), `src/routes/recordings.tsx` (Transcript editor entry), `src/lib/hls/scheduled-recorder.ts` (parallel full copy), `src/lib/recordings.functions.ts` (auth middleware), `src/start.ts` (bearer attacher check)
-- move: existent Routen → `src/routes/_authenticated/`
-- Migratioun: RLS + GRANTs um `recordings`
+## Offene Frage
+Beim Anlegen eines Users: Willst du (a) ein temporäres Passwort setzen und dem User mitteilen, oder (b) einen Magic-Link/Invite per E-Mail schicken lassen? Default-Vorschlag: (b) Invite per E-Mail.

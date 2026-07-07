@@ -8,10 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Loader2, Scissors } from "lucide-react";
 
-type Mode = "signin" | "signup";
-
 export function AuthPage() {
-  const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState<null | "email" | "google">(null);
@@ -21,18 +18,8 @@ export function AuthPage() {
     if (!email || !password) return;
     setBusy("email");
     try {
-      if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { emailRedirectTo: `${window.location.origin}/` },
-        });
-        if (error) throw error;
-        toast.success("Check your email to confirm your account.");
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-      }
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -60,11 +47,9 @@ export function AuthPage() {
           <div className="mx-auto h-11 w-11 rounded-md bg-primary text-primary-foreground grid place-items-center">
             <Scissors className="h-5 w-5" />
           </div>
-          <CardTitle className="text-lg">
-            {mode === "signin" ? "Sign in to LuxStream" : "Create an account"}
-          </CardTitle>
+          <CardTitle className="text-lg">Sign in to LuxStream</CardTitle>
           <p className="text-xs text-muted-foreground">
-            Shared workspace — every signed-in user sees the same recordings library.
+            Accounts are created by your administrator. Contact them if you don't have access yet.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -111,26 +96,19 @@ export function AuthPage() {
                 type="password"
                 required
                 minLength={6}
-                autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
             <Button type="submit" className="w-full" disabled={busy !== null}>
               {busy === "email" && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              {mode === "signin" ? "Sign in" : "Create account"}
+              Sign in
             </Button>
           </form>
 
           <p className="text-center text-xs text-muted-foreground">
-            {mode === "signin" ? "No account yet?" : "Already have an account?"}{" "}
-            <button
-              type="button"
-              className="underline text-foreground"
-              onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
-            >
-              {mode === "signin" ? "Create one" : "Sign in"}
-            </button>
+            Forgot your password? Ask your administrator to send you a reset link.
           </p>
         </CardContent>
       </Card>
