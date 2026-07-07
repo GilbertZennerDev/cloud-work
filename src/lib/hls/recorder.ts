@@ -11,6 +11,14 @@ export interface RecorderHandle {
   stop: () => Promise<Blob>;
   /** Snapshot currently buffered bytes as an MPEG-TS blob without stopping. */
   snapshot: () => Promise<Blob>;
+  /**
+   * Snapshot video/audio segments starting at `startIdx` (video segment index)
+   * up to the current end. Returns the delta blob and the new cursor to pass
+   * back next time to get only newly-buffered bytes.
+   */
+  snapshotFrom: (startIdx: number) => Promise<{ blob: Blob; endIdx: number }>;
+  /** Current number of buffered video segments (usable as a cursor). */
+  getVideoSegmentCount: () => number;
   onStatus: (cb: (s: RecorderStatus) => void) => void;
   onLog: (cb: (msg: string) => void) => void;
 }
@@ -186,23 +194,33 @@ export async function startRecording(playlistUrl: string): Promise<RecorderHandl
     });
   }
 
-  const buildBlob = async (): Promise<Blob> => {
-    const video = concatBlob(videoChunks, "video/mp2t");
+  const buildBlobFrom = async (startIdx: number): Promise<Blob> => {
+    const vSlice = videoChunks.slice(startIdx);
+    const video = concatBlob(vSlice, "video/mp2t");
     if (!audioUrl || audioChunks.length === 0) return video;
-    // Guess audio MIME based on the first audio segment extension in the URL.
+    // Take the same proportional slice of the audio buffer. Audio and video
+    // segments are usually aligned 1:1 in HLS; if they drift, ffmpeg will
+    // realign timestamps at mux time.
+    const aSlice = audioChunks.slice(Math.min(startIdx, audioChunks.length));
     const isAac = /\.aac(\?|$)/i.test(audioUrl);
-    const audio = concatBlob(audioChunks, isAac ? "audio/aac" : "video/mp2t");
+    const audio = concatBlob(aSlice, isAac ? "audio/aac" : "video/mp2t");
     return muxAvIntoTs(video, audio, (m) => log(`[HLS] ${m}`));
   };
 
   return {
     onStatus: (cb) => { statusCb = cb; },
     onLog: (cb) => { logCb = cb; },
-    snapshot: () => buildBlob(),
+    snapshot: () => buildBlobFrom(0),
+    snapshotFrom: async (startIdx: number) => {
+      const endIdx = videoChunks.length;
+      const blob = await buildBlobFrom(startIdx);
+      return { blob, endIdx };
+    },
+    getVideoSegmentCount: () => videoChunks.length,
     stop: async () => {
       stopped = true;
       ac.abort();
-      return buildBlob();
+      return buildBlobFrom(0);
     },
   };
 }

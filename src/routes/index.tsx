@@ -26,7 +26,14 @@ import { cutAndConcat, extractAudioMp3, burnSubtitles, remuxTsToMp4, cuesToAss, 
 import { onFfmpegLog, cancelFFmpeg } from "@/lib/ffmpeg/client";
 import { luxasrJsonToCues, cuesToSrt, type SrtCue } from "@/lib/subtitles/luxasrToSrt";
 import { shortenCues } from "@/lib/subtitles/shortenSrt";
-import { startRecording } from "@/lib/hls/recorder";
+import {
+  ensureSharedRecorder,
+  snapshotSharedRecorderDelta,
+  getSharedRecorderInfo,
+  getSharedStreamUrl,
+  setSharedStreamUrl,
+  DEFAULT_STREAM_URL,
+} from "@/lib/hls/shared-recorder";
 import { SubtitlePreview } from "@/components/cutter/SubtitlePreview";
 
 
@@ -184,13 +191,29 @@ function Dashboard() {
   const [isPreparingSourcePreview, setIsPreparingSourcePreview] = useState(false);
   const handledRecordingRef = useRef<string | null>(null);
 
-  // Live snapshot from an HLS URL directly into the Source Video slot
-  const [snapshotUrl, setSnapshotUrl] = useState(
-    "https://media02.webtvlive.eu/chd-edge/smil:chamber_tv_hd.smil/playlist.m3u8",
-  );
-  const [snapshotSeconds, setSnapshotSeconds] = useState(30);
+  // Snapshot the running shared HLS recorder (URL configured in Studio, or
+  // the one the Cutter itself starts on first snapshot).
+  const [snapshotUrl, setSnapshotUrl] = useState(DEFAULT_STREAM_URL);
   const [snapshotBusy, setSnapshotBusy] = useState(false);
   const [snapshotProgress, setSnapshotProgress] = useState<string>("");
+  const [sharedInfo, setSharedInfo] = useState<ReturnType<typeof getSharedRecorderInfo>>(null);
+
+  // Hydrate URL from the shared store (Studio writes it there).
+  useEffect(() => {
+    const saved = getSharedStreamUrl();
+    if (saved) setSnapshotUrl(saved);
+  }, []);
+  useEffect(() => {
+    if (snapshotUrl) setSharedStreamUrl(snapshotUrl);
+  }, [snapshotUrl]);
+
+  // Refresh shared-recorder status every 2s so the UI shows buffered segments.
+  useEffect(() => {
+    const tick = () => setSharedInfo(getSharedRecorderInfo());
+    tick();
+    const id = setInterval(tick, 2000);
+    return () => clearInterval(id);
+  }, []);
 
 
   // If ?recording=<id> is present, fetch it and load into the pipeline.
@@ -259,38 +282,40 @@ function Dashboard() {
   const runSnapshot = useCallback(async () => {
     if (snapshotBusy || !snapshotUrl) return;
     setSnapshotBusy(true);
-    setSnapshotProgress("Starting HLS recorder…");
-    const t = toast.loading(`Grabbing ${snapshotSeconds}s from live stream…`);
-    let handle: Awaited<ReturnType<typeof startRecording>> | null = null;
+    setSnapshotProgress("Preparing shared recorder…");
+    const t = toast.loading("Saving live snapshot to Recordings…");
     try {
-      handle = await startRecording(snapshotUrl);
-      handle.onLog((m) => setSnapshotProgress(m));
-      handle.onStatus((s) => {
-        if (s.bytes > 0) {
-          setSnapshotProgress(
-            `Buffering: ${s.segments} segment${s.segments === 1 ? "" : "s"} · ${(s.bytes / 1024 / 1024).toFixed(1)} MB`,
-          );
+      // Ensure the background recorder is running against the configured URL.
+      // If it wasn't already (e.g. Studio was never opened this session),
+      // start it now and wait until at least one segment is buffered so the
+      // first snapshot isn't empty.
+      const before = getSharedRecorderInfo();
+      const wasRunning = before?.url === snapshotUrl;
+      await ensureSharedRecorder(snapshotUrl, (m) => setSnapshotProgress(m));
+      if (!wasRunning) {
+        setSnapshotProgress("Waiting for first segment…");
+        const waitStart = Date.now();
+        while (Date.now() - waitStart < 30_000) {
+          const info = getSharedRecorderInfo();
+          if (info && info.bufferedSegments > 0) break;
+          await new Promise((r) => setTimeout(r, 500));
         }
-      });
-      const secs = Math.max(5, Math.min(300, snapshotSeconds));
-      const started = Date.now();
-      const startedAt = new Date();
-      while (Date.now() - started < secs * 1000) {
-        await new Promise((r) => setTimeout(r, 500));
       }
-      setSnapshotProgress("Finalizing snapshot…");
-      const tsBlob = await handle.stop();
-      handle = null;
-      if (tsBlob.size === 0) throw new Error("No bytes captured — check the URL");
 
-      setSnapshotProgress(`Uploading ${(tsBlob.size / 1024 / 1024).toFixed(1)} MB to Recordings…`);
-      const sessionDate = startedAt.toISOString().slice(0, 10);
+      setSnapshotProgress("Building snapshot…");
+      const delta = await snapshotSharedRecorderDelta();
+      if (!delta || delta.blob.size === 0) {
+        throw new Error("Nothing buffered yet — wait a few seconds and try again");
+      }
+
+      setSnapshotProgress(`Uploading ${(delta.blob.size / 1024 / 1024).toFixed(1)} MB to Recordings…`);
+      const sessionDate = delta.startedAt.toISOString().slice(0, 10);
       const chunkIndex = 9000 + (Math.floor(Date.now() / 1000) % 100000);
       const created = await createRecording({
         data: {
           sessionDate,
           chunkIndex,
-          startedAt: startedAt.toISOString(),
+          startedAt: delta.startedAt.toISOString(),
           sourceUrl: snapshotUrl,
           title: `Live snapshot ${new Date().toLocaleTimeString()}`,
           fileExt: "ts",
@@ -298,29 +323,29 @@ function Dashboard() {
       });
       const { error } = await supabase.storage
         .from("recordings")
-        .uploadToSignedUrl(created.path, created.token, tsBlob, {
+        .uploadToSignedUrl(created.path, created.token, delta.blob, {
           contentType: "video/mp2t",
         });
       if (error) throw error;
       await markRecordingReady({
         data: {
           id: created.id,
-          endedAt: new Date().toISOString(),
-          sizeBytes: tsBlob.size,
+          endedAt: delta.endedAt.toISOString(),
+          sizeBytes: delta.blob.size,
         },
       });
+      setSharedInfo(getSharedRecorderInfo());
       toast.success(
-        `Snapshot saved to Recordings (${(tsBlob.size / 1024 / 1024).toFixed(1)} MB)`,
+        `Snapshot saved (${delta.segments} segment${delta.segments === 1 ? "" : "s"} · ${(delta.blob.size / 1024 / 1024).toFixed(1)} MB)`,
         { id: t, duration: 6000 },
       );
     } catch (err) {
       toast.error(`Snapshot failed: ${(err as Error).message}`, { id: t });
     } finally {
-      try { await handle?.stop(); } catch {}
       setSnapshotBusy(false);
       setSnapshotProgress("");
     }
-  }, [snapshotBusy, snapshotUrl, snapshotSeconds]);
+  }, [snapshotBusy, snapshotUrl]);
 
 
 
@@ -1000,7 +1025,7 @@ function Dashboard() {
             </CardHeader>
             <CardContent className="space-y-3">
               <p className="text-xs text-muted-foreground">
-                Grab the last <b>N seconds</b> of any HLS live stream and save it straight to <b>Recordings</b> — no need to open Studio. Load it from the Recordings tab afterwards to cut it.
+                Saves everything the shared recorder has buffered <b>since it started</b> (or since your last snapshot) straight to <b>Recordings</b>. Uses the same stream URL as Studio — no need to open the Studio tab.
               </p>
               <div className="space-y-1.5">
                 <Label htmlFor="snap-url">HLS playlist URL</Label>
@@ -1012,22 +1037,21 @@ function Dashboard() {
                   placeholder="https://…/playlist.m3u8"
                 />
               </div>
-              <div className="grid grid-cols-[1fr_auto] gap-2 items-end">
-                <div className="space-y-1.5">
-                  <Label htmlFor="snap-secs">Duration (seconds)</Label>
-                  <Input
-                    id="snap-secs"
-                    type="number"
-                    min={5}
-                    max={300}
-                    value={snapshotSeconds}
-                    onChange={(e) => setSnapshotSeconds(Math.max(5, Math.min(300, Number(e.target.value) || 30)))}
-                    disabled={snapshotBusy}
-                  />
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs text-muted-foreground font-mono">
+                  {sharedInfo && sharedInfo.url === snapshotUrl ? (
+                    <>
+                      ● Buffered: {sharedInfo.bufferedSegments - sharedInfo.cursor} new segment
+                      {sharedInfo.bufferedSegments - sharedInfo.cursor === 1 ? "" : "s"} · since{" "}
+                      {sharedInfo.startedAt.toLocaleTimeString()}
+                    </>
+                  ) : (
+                    <>○ Recorder idle — first snapshot will start it</>
+                  )}
                 </div>
                 <Button onClick={runSnapshot} disabled={snapshotBusy || !snapshotUrl}>
                   {snapshotBusy ? (
-                    <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Capturing…</>
+                    <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Saving…</>
                   ) : (
                     <><Camera className="h-4 w-4 mr-2" /> Snapshot</>
                   )}

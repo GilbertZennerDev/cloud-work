@@ -21,10 +21,14 @@ import {
   startScheduledRecording,
   type ScheduledRecorderHandle,
 } from "@/lib/hls/scheduled-recorder";
+import {
+  getSharedStreamUrl,
+  setSharedStreamUrl,
+  DEFAULT_STREAM_URL,
+} from "@/lib/hls/shared-recorder";
 import { LivePreview } from "@/components/studio/LivePreview";
 
-const DEFAULT_URL =
-  "https://media02.webtvlive.eu/chd-edge/smil:chamber_tv_hd.smil/playlist.m3u8";
+const DEFAULT_URL = DEFAULT_STREAM_URL;
 
 export const Route = createFileRoute("/studio")({
   head: () => ({
@@ -61,6 +65,16 @@ function StudioError({ error, reset }: { error: Error; reset: () => void }) {
 
 function Studio() {
   const [url, setUrl] = useState(DEFAULT_URL);
+
+  // Hydrate URL from shared storage on mount; persist on every change so the
+  // Cutter's Snapshot can grab from the same live stream.
+  useEffect(() => {
+    const saved = getSharedStreamUrl();
+    if (saved) setUrl(saved);
+  }, []);
+  useEffect(() => {
+    if (url) setSharedStreamUrl(url);
+  }, [url]);
   const [autoMode, setAutoMode] = useState(true);
   const [fullCopy, setFullCopy] = useState(true);
   const [logs, setLogs] = useState<string[]>([]);
