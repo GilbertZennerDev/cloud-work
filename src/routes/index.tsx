@@ -181,6 +181,7 @@ function Dashboard() {
   const [srtText, setSrtText] = useState<string | null>(null);
   const [subbedBlob, setSubbedBlob] = useState<Blob | null>(null);
   const [cues, setCues] = useState<SrtCue[]>([]);
+  const [rawCues, setRawCues] = useState<SrtCue[]>([]);
   const [selectedCues, setSelectedCues] = useState<Set<number>>(new Set());
 
   const toggleCue = (idx: number) =>
