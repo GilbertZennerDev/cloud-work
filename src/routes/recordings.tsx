@@ -304,6 +304,22 @@ function RecordingsPage() {
           </Card>
         ))}
       </main>
+
+      <Dialog open={!!preview} onOpenChange={(o) => !o && setPreview(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle className="truncate">{preview?.title}</DialogTitle>
+          </DialogHeader>
+          {preview && (
+            <video
+              src={preview.url}
+              controls
+              autoPlay
+              className="w-full max-h-[70vh] rounded-md bg-black"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
