@@ -1,78 +1,48 @@
-## Neuer Tab: Premiere-Skript-Generator
+## Problem
 
-Ein neuer Top-Level-Tab `/premiere`, in dem der User Bilder per Drag & Drop reinzieht und daraus ein **Adobe Premiere ExtendScript (.jsx)** herunterlädt, das die Bildbearbeitung/-anordnung automatisiert.
+Chamber TV's HLS master playlist puts **audio in a separate `#EXT-X-MEDIA TYPE=AUDIO` group**, not muxed into the video variant. The current recorder (`src/lib/hls/recorder.ts`) picks the highest-bandwidth video variant and downloads only its segments — so every `.ts` we save has **video only, no audio**.
 
-### Navigation
+Consequences:
+- `remuxTsToMp4` fails: it applies `-bsf:a aac_adtstoasc` to a non-existent audio stream, and ffmpeg aborts.
+- Even if remux succeeded, the MP4 would be silent — useless for a parliamentary channel.
 
-- Nav-Link "Premiere" neben Studio/Recordings in `src/routes/__root.tsx`.
-- Neue Route-Datei `src/routes/premiere.tsx` mit eigenem `head()` (Title/Description/OG).
+## Fix, in two steps
 
-### UI (`src/routes/premiere.tsx`)
+### 1. Make remux tolerant so existing/silent .ts still previews
 
-Eine Seite, kein Multi-Step-Wizard:
+In `src/lib/ffmpeg/operations.ts → remuxTsToMp4`:
+- Drop the hard `-bsf:a aac_adtstoasc` flag.
+- Try `-c copy` first. If it fails, fall back to `-c:v copy` (video only, no audio mapping).
+- Return whichever succeeds. The preview dialog then just plays a silent MP4 for legacy chunks.
 
-1. **Dropzone** (JPG/PNG/WEBP, mehrere Dateien, auch per Datei-Picker). Reihenfolge = Drop-Reihenfolge, per Drag sortierbar (kleine Thumbnails mit Index).
-2. **Optionen-Panel** (alles optional, sinnvolle Defaults, da "jegliche Bildbearbeitung" gewünscht ist — wir bieten die gebräuchlichsten Automatisierungen als Toggles):
-   - Sequenz-Preset: Framerate (24/25/30/50/60), Auflösung (1920×1080 / 3840×2160 / auto-from-first-image).
-   - Clip-Dauer pro Bild (Sekunden, default 3s).
-   - Übergang: keiner / Cross Dissolve / Dip to Black (Dauer in Frames).
-   - Ken-Burns-Zoom (an/aus, Richtung zufällig/in/out, Stärke %).
-   - Auto-Fit: Scale-to-Fit oder Scale-to-Fill.
-   - Farbkorrektur-Preset: keiner / +Kontrast / S/W / Warm / Kalt (wird als Lumetri-Basiswerte gesetzt).
-   - Titel-Overlay aus Dateinamen (an/aus, Dauer, Position).
-   - Ziel-Bin-Name & Sequenz-Name.
-3. **Bildpfad-Modus** (wichtig, weil ExtendScript lokale Dateipfade braucht):
-   - a) User gibt einen **Ordnerpfad** ein (z. B. `/Users/x/Bilder/shoot1`) und das Skript liest Dateien aus dem Ordner in der eingegebenen Reihenfolge (Dateinamen kommen aus dem Drop).
-   - b) Alternative "Portable"-Modus: Skript zeigt beim Start `Folder.selectDialog()` und matcht Dateinamen.
-   Default: (b), weil kein Pfad nötig ist.
-4. **Buttons**:
-   - `Skript herunterladen` → `.jsx`-Datei via Blob-Download.
-   - `In Zwischenablage kopieren`.
-   - `Vorschau` → Read-only Code-View des generierten Skripts (in einem `<pre>`).
-5. **Anleitung** (Accordion): "So führst du das Skript in Premiere aus" — File → Scripts → Run Script File… (bzw. ExtendScript Toolkit).
+Effect: live-snapshot preview and any previously recorded video-only `.ts` will start working today.
 
-### Skript-Generierung (`src/lib/premiere/generateJsx.ts`)
+### 2. Record the audio group alongside the video, so new recordings have sound
 
-Reine clientseitige String-Generierung, keine Backend-Calls, keine Uploads.
+In `src/lib/hls/parsePlaylist.ts` and `src/lib/hls/recorder.ts`:
+- Extend `parseMaster` to also return `#EXT-X-MEDIA TYPE=AUDIO` entries (id, group-id, uri, default flag).
+- When a variant declares `AUDIO="<group>"`, resolve the matching audio media playlist and poll it in parallel with the video playlist.
+- Keep two segment buffers (video `.ts`, audio `.aac`/`.ts`). On `stop()` / `snapshot()`:
+  - If audio is present, emit a small container: write both to ffmpeg.wasm and mux with `ffmpeg -i video.ts -i audio.aac -c copy out.ts` (fast, no re-encode). Return that combined blob.
+  - If no separate audio group exists (normal muxed stream), keep the current fast path (just concatenate video segments).
+- Storage stays `video/mp2t`; extension stays `.ts`; DB schema untouched.
 
-- Nimmt `{ files: {name: string}[], options }` und gibt einen ExtendScript-String zurück.
-- Struktur des erzeugten `.jsx`:
-  1. `#target premierepro`
-  2. Helper-Funktionen: `pickFolder()`, `importFile(path)`, `addToSequence(clip, offset)`.
-  3. `app.project.newSequence(name, presetPath?)` bzw. `Sequence`-Erstellung über `app.project.createNewSequence(name, id)` + Anpassung von Framerate/Auflösung wo möglich (ExtendScript ist hier limitiert; wir fallen auf ein eingebettetes Preset per `newSequenceFromPresets` mit Standard-Preset-Pfad zurück und dokumentieren das).
-  4. Loop über Dateinamen: importieren, an Video-Track 1 anhängen mit `insertClip`, `end += clipDuration`.
-  5. Optional: Motion-Keyframes für Ken-Burns via `clip.components["Motion"].properties["Scale"|"Position"].setValueAtKey(...)`.
-  6. Optional: Übergänge — `sequence.videoTracks[0].clips[i].applyDefaultTransition()` oder `QE`-DOM-Fallback für Cross Dissolve.
-  7. Optional: Lumetri Color-Effekt anhängen mit Preset-Werten (Kontrast, Sättigung, Temperatur).
-  8. Optional: Titel-Overlay via `app.project.createNewItem` (Legacy Title) oder MOGRT — wir nehmen Legacy Title als Fallback, weil pfadunabhängig.
-- Alle Optionen werden als Konstanten oben im Skript gesetzt, sodass der User sie im .jsx auch direkt editieren kann.
+Then update `remuxTsToMp4` to keep `aac_adtstoasc` as an **attempted** flag (still with the fallback from step 1) so new combined recordings remux cleanly to MP4 with audio.
 
-### Utility
+### 3. Touch-ups
 
-- `src/lib/premiere/escapeJsxString.ts` — sicheres Escapen von Dateinamen (Quotes, Backslashes) für den generierten String. Alle User-Inputs (Sequenznamen, Bin-Namen, Pfad) laufen hier durch, plus Zod-Schema für die Optionen im UI.
+- `src/lib/hls/scheduled-recorder.ts`: no changes needed — it consumes whatever blob the recorder returns.
+- `src/components/studio/LivePreview.tsx`: unchanged (it grabs frames from a `<video>` element pointed at the live URL, which is independent of what we record).
+- Log a one-line note when the audio group is detected, so it's visible in the Studio log.
 
-### Neue/geänderte Dateien
+## Out of scope
 
-```
-src/routes/premiere.tsx                    (neu)
-src/components/premiere/PremiereDropzone.tsx (neu — Bilder-Grid + Sort)
-src/components/premiere/PremiereOptions.tsx  (neu — Form mit shadcn Inputs/Select/Switch)
-src/components/premiere/ScriptPreview.tsx    (neu — Code-Vorschau + Copy/Download)
-src/lib/premiere/generateJsx.ts              (neu)
-src/lib/premiere/escapeJsxString.ts          (neu)
-src/lib/premiere/schema.ts                   (neu — Zod-Schema für Optionen)
-src/routes/__root.tsx                        (Nav-Link "Premiere" hinzufügen)
-```
+- Re-processing already-saved silent recordings (they stay silent).
+- Switching to `hls.js` or `mpegts.js` for playback — the remux path is enough.
+- Any UI changes on Studio, Recordings, or Cutter.
 
-`src/routeTree.gen.ts` wird vom TanStack-Router-Plugin automatisch aktualisiert.
+## Files touched
 
-### Out of Scope
-
-- Kein Upload der Bilder in die Cloud — alles läuft lokal im Browser; das Skript referenziert nur Dateinamen.
-- Kein Rendern/Export aus Premiere heraus (das Skript baut nur die Sequenz).
-- Keine UXP-Variante, keine FCPXML-Ausgabe.
-- Keine Photoshop-Automation.
-
-### Offene Details
-
-Da "jegliche Bildbearbeitung" sehr breit ist, liefere ich den o. g. Grundstock (Sequenz aus Bildern + Ken Burns + Übergänge + Lumetri-Preset + Titel). Weitere Effekte (Masken, Speed-Ramps, Audio-Beds, spezifische MOGRTs) füge ich in einem Folge-Task hinzu, sobald du konkrete Effekte nennst.
+- `src/lib/ffmpeg/operations.ts` — tolerant remux
+- `src/lib/hls/parsePlaylist.ts` — parse audio media entries
+- `src/lib/hls/recorder.ts` — parallel audio polling + mux on stop/snapshot
