@@ -2,7 +2,7 @@ import { createFileRoute, Link, useSearch, useNavigate } from "@tanstack/react-r
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import { getRecordingDownloadUrl, saveRecordingTranscript } from "@/lib/recordings.functions";
-import { Radio, Library, Film } from "lucide-react";
+import { Radio, Library, Film, Camera } from "lucide-react";
 import {
   CheckCircle2, Circle, Loader2, Upload, Download, Scissors,
   Music, Cloud, FileText, Type, Flame, Play, X,
@@ -25,6 +25,8 @@ import { cutAndConcat, extractAudioMp3, burnSubtitles, remuxTsToMp4 } from "@/li
 import { onFfmpegLog, cancelFFmpeg } from "@/lib/ffmpeg/client";
 import { luxasrJsonToCues, cuesToSrt, type SrtCue } from "@/lib/subtitles/luxasrToSrt";
 import { shortenCues } from "@/lib/subtitles/shortenSrt";
+import { startRecording } from "@/lib/hls/recorder";
+
 
 
 const indexSearchSchema = z.object({
@@ -180,6 +182,15 @@ function Dashboard() {
   const [isPreparingSourcePreview, setIsPreparingSourcePreview] = useState(false);
   const handledRecordingRef = useRef<string | null>(null);
 
+  // Live snapshot from an HLS URL directly into the Source Video slot
+  const [snapshotUrl, setSnapshotUrl] = useState(
+    "https://media02.webtvlive.eu/chd-edge/smil:chamber_tv_hd.smil/playlist.m3u8",
+  );
+  const [snapshotSeconds, setSnapshotSeconds] = useState(30);
+  const [snapshotBusy, setSnapshotBusy] = useState(false);
+  const [snapshotProgress, setSnapshotProgress] = useState<string>("");
+
+
   // If ?recording=<id> is present, fetch it and load into the pipeline.
   useEffect(() => {
     const id = search.recording;
@@ -242,6 +253,62 @@ function Dashboard() {
       }
     })();
   }, [search.recording, navigate]);
+
+  const runSnapshot = useCallback(async () => {
+    if (snapshotBusy || !snapshotUrl) return;
+    setSnapshotBusy(true);
+    setSnapshotProgress("Starting HLS recorder…");
+    const t = toast.loading(`Grabbing ${snapshotSeconds}s from live stream…`);
+    let handle: Awaited<ReturnType<typeof startRecording>> | null = null;
+    try {
+      handle = await startRecording(snapshotUrl);
+      handle.onLog((m) => setSnapshotProgress(m));
+      handle.onStatus((s) => {
+        if (s.bytes > 0) {
+          setSnapshotProgress(
+            `Buffering: ${s.segments} segment${s.segments === 1 ? "" : "s"} · ${(s.bytes / 1024 / 1024).toFixed(1)} MB`,
+          );
+        }
+      });
+      const secs = Math.max(5, Math.min(300, snapshotSeconds));
+      // Wait until we have at least some bytes or we hit the target duration.
+      const started = Date.now();
+      while (Date.now() - started < secs * 1000) {
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      setSnapshotProgress("Finalizing snapshot…");
+      const tsBlob = await handle.stop();
+      handle = null;
+      if (tsBlob.size === 0) throw new Error("No bytes captured — check the URL");
+      setSnapshotProgress(`Remuxing ${(tsBlob.size / 1024 / 1024).toFixed(1)} MB to MP4…`);
+      const mp4 = await remuxTsToMp4(tsBlob);
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const name = `live-snapshot_${stamp}.mp4`;
+      const f = new File([mp4 as BlobPart], name, { type: "video/mp4" });
+      setFile(f);
+      setSourceTitle(`Live snapshot · ${new Date().toLocaleTimeString()}`);
+      setRecordingId(null);
+      setRawCues([]);
+      setCues([]);
+      setSelectedCues(new Set());
+      setSrtText(null);
+      setClipBlob(null);
+      setAudioBlob(null);
+      setSubbedBlob(null);
+      setSourcePreviewBlob(null);
+      setSourcePreviewError(null);
+      handledRecordingRef.current = null;
+      toast.success(`Loaded ${(f.size / 1024 / 1024).toFixed(1)} MB of live footage`, { id: t });
+    } catch (err) {
+      toast.error(`Snapshot failed: ${(err as Error).message}`, { id: t });
+    } finally {
+      try { await handle?.stop(); } catch {}
+      setSnapshotBusy(false);
+      setSnapshotProgress("");
+    }
+  }, [snapshotBusy, snapshotUrl, snapshotSeconds]);
+
+
 
 
 
@@ -891,6 +958,55 @@ function Dashboard() {
               )}
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Camera className="h-4 w-4" /> Live snapshot from HLS
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Grab the last <b>N seconds</b> of any HLS live stream directly into <b>Source video</b> — no need to record via Studio first.
+              </p>
+              <div className="space-y-1.5">
+                <Label htmlFor="snap-url">HLS playlist URL</Label>
+                <Input
+                  id="snap-url"
+                  value={snapshotUrl}
+                  onChange={(e) => setSnapshotUrl(e.target.value)}
+                  disabled={snapshotBusy}
+                  placeholder="https://…/playlist.m3u8"
+                />
+              </div>
+              <div className="grid grid-cols-[1fr_auto] gap-2 items-end">
+                <div className="space-y-1.5">
+                  <Label htmlFor="snap-secs">Duration (seconds)</Label>
+                  <Input
+                    id="snap-secs"
+                    type="number"
+                    min={5}
+                    max={300}
+                    value={snapshotSeconds}
+                    onChange={(e) => setSnapshotSeconds(Math.max(5, Math.min(300, Number(e.target.value) || 30)))}
+                    disabled={snapshotBusy}
+                  />
+                </div>
+                <Button onClick={runSnapshot} disabled={snapshotBusy || !snapshotUrl}>
+                  {snapshotBusy ? (
+                    <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Capturing…</>
+                  ) : (
+                    <><Camera className="h-4 w-4 mr-2" /> Snapshot</>
+                  )}
+                </Button>
+              </div>
+              {snapshotBusy && snapshotProgress && (
+                <p className="text-xs text-muted-foreground font-mono truncate">{snapshotProgress}</p>
+              )}
+            </CardContent>
+          </Card>
+
+
 
           <Card>
             <CardHeader className="pb-3">

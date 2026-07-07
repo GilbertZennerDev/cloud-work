@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
-import { Library, Scissors, Radio, Download, Trash2, ArrowRight, Loader2, Film, Upload, Play } from "lucide-react";
+import { Library, Scissors, Radio, Download, Trash2, ArrowRight, Loader2, Film, Upload, Play, FileText } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +17,8 @@ import {
   markRecordingFailed,
   type RecordingRow,
 } from "@/lib/recordings.functions";
+import { TranscriptEditor } from "@/components/recordings/TranscriptEditor";
+
 
 
 const RECORDINGS_BUCKET = "recordings";
@@ -66,6 +68,8 @@ function RecordingsPage() {
   };
 
   const [preview, setPreview] = useState<{ url: string; title: string; remuxing?: boolean } | null>(null);
+  const [transcriptFor, setTranscriptFor] = useState<{ id: string; title: string } | null>(null);
+
   const previewMut = useMutation({
     mutationFn: async (r: RecordingRow) => {
       const { url } = await getRecordingDownloadUrl({ data: { id: r.id } });
@@ -280,6 +284,12 @@ function RecordingsPage() {
                         {r.error && <span className="text-destructive"> · {r.error}</span>}
                       </div>
                     </div>
+                    {r.full_copy && <Badge variant="secondary">Full copy</Badge>}
+                    {r.transcript && r.transcript.length > 0 && (
+                      <Badge variant="outline" title={`${r.transcript.length} cues`}>
+                        <FileText className="h-3 w-3 mr-1" /> {r.transcript.length}
+                      </Badge>
+                    )}
                     <StatusBadge status={r.status} />
                     <div className="flex gap-1">
                       <Button
@@ -289,6 +299,20 @@ function RecordingsPage() {
                         onClick={() => openInCutter(r)}
                       >
                         <ArrowRight className="h-3 w-3 mr-1" /> Cut
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={r.status !== "ready"}
+                        onClick={() =>
+                          setTranscriptFor({
+                            id: r.id,
+                            title: r.title ?? r.storage_path.split("/").pop() ?? "Transcript",
+                          })
+                        }
+                        title="Edit transcript"
+                      >
+                        <FileText className="h-3 w-3" />
                       </Button>
                       <Button
                         size="sm"
@@ -318,6 +342,7 @@ function RecordingsPage() {
                         <Trash2 className="h-3 w-3" />
                       </Button>
                     </div>
+
                   </div>
                 ))}
               </div>
@@ -356,7 +381,17 @@ function RecordingsPage() {
         </DialogContent>
       </Dialog>
 
+      {transcriptFor && (
+        <TranscriptEditor
+          recordingId={transcriptFor.id}
+          title={transcriptFor.title}
+          open={true}
+          onClose={() => setTranscriptFor(null)}
+          onSaved={() => qc.invalidateQueries({ queryKey: ["recordings"] })}
+        />
+      )}
     </div>
+
   );
 }
 
