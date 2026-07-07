@@ -329,6 +329,9 @@ function Dashboard() {
   };
   const [mode, setMode] = useState<Mode>("full");
   const [fontSize, setFontSize] = useState(28);
+  const [subX, setSubX] = useState(50); // % from left (centre of text)
+  const [subY, setSubY] = useState(88); // % from top (centre of text)
+  const [subOutline, setSubOutline] = useState(2); // px
   const [maxSentences, setMaxSentences] = useState(2);
   const [maxChars, setMaxChars] = useState(90);
   const [burnIn, setBurnIn] = useState(true);
