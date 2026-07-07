@@ -1,10 +1,11 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
-import { Library, Scissors, Radio, Download, Trash2, ArrowRight, Loader2, Film, Upload } from "lucide-react";
+import { Library, Scissors, Radio, Download, Trash2, ArrowRight, Loader2, Film, Upload, Play } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -16,6 +17,7 @@ import {
   markRecordingFailed,
   type RecordingRow,
 } from "@/lib/recordings.functions";
+
 
 const RECORDINGS_BUCKET = "recordings";
 
@@ -62,6 +64,16 @@ function RecordingsPage() {
   const openInCutter = (r: RecordingRow) => {
     navigate({ to: "/", search: { recording: r.id } as never });
   };
+
+  const [preview, setPreview] = useState<{ url: string; title: string } | null>(null);
+  const previewMut = useMutation({
+    mutationFn: async (r: RecordingRow) => {
+      const { url } = await getRecordingDownloadUrl({ data: { id: r.id } });
+      setPreview({ url, title: r.title ?? r.storage_path.split("/").pop() ?? "Recording" });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadProgress, setUploadProgress] = useState<{ name: string; done: number; total: number } | null>(null);
@@ -260,6 +272,15 @@ function RecordingsPage() {
                       <Button
                         size="sm"
                         variant="outline"
+                        disabled={r.status !== "ready" || previewMut.isPending}
+                        onClick={() => previewMut.mutate(r)}
+                        title="Preview"
+                      >
+                        <Play className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
                         disabled={r.status !== "ready" || dl.isPending}
                         onClick={() => dl.mutate(r)}
                       >
@@ -283,6 +304,22 @@ function RecordingsPage() {
           </Card>
         ))}
       </main>
+
+      <Dialog open={!!preview} onOpenChange={(o) => !o && setPreview(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle className="truncate">{preview?.title}</DialogTitle>
+          </DialogHeader>
+          {preview && (
+            <video
+              src={preview.url}
+              controls
+              autoPlay
+              className="w-full max-h-[70vh] rounded-md bg-black"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
