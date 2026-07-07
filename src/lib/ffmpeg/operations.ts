@@ -296,10 +296,11 @@ export function cuesToAss(cues: AssCue[], style: SubtitleStyle): string {
 
   const events = cues
     .filter((c) => c.end > c.start && c.text.trim().length > 0)
-    .map(
-      (c) =>
-        `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Default,,0,0,0,,{\\pos(${posX},${posY})}${escapeAssText(c.text)}`,
-    )
+    .map((c) => {
+      const px = typeof c.xPct === "number" ? Math.round((c.xPct / 100) * w) : defaultX;
+      const py = typeof c.yPct === "number" ? Math.round((c.yPct / 100) * h) : defaultY;
+      return `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Default,,0,0,0,,{\\pos(${px},${py})}${escapeAssText(c.text)}`;
+    })
     .join("\n");
 
   return [
