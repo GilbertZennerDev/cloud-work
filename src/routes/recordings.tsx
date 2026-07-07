@@ -1,10 +1,11 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
-import { Library, Scissors, Radio, Download, Trash2, ArrowRight, Loader2, Film, Upload } from "lucide-react";
+import { Library, Scissors, Radio, Download, Trash2, ArrowRight, Loader2, Film, Upload, Play } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -16,6 +17,7 @@ import {
   markRecordingFailed,
   type RecordingRow,
 } from "@/lib/recordings.functions";
+
 
 const RECORDINGS_BUCKET = "recordings";
 
