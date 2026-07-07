@@ -145,6 +145,14 @@ export function startScheduledRecording(
   return {
     isRunning: () => !stopped,
     getChunkCount: () => chunkIndex + 1,
+    snapshotCurrent: () => {
+      if (!current) return null;
+      return {
+        blob: current.snapshot(),
+        startedAt: currentStartedAt,
+        chunkIndex,
+      };
+    },
     stop: async () => {
       if (stopped) return;
       stopped = true;
