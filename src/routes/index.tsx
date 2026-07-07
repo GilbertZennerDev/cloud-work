@@ -25,7 +25,7 @@ import { cutAndConcat, extractAudioMp3, burnSubtitles } from "@/lib/ffmpeg/opera
 import { onFfmpegLog, cancelFFmpeg } from "@/lib/ffmpeg/client";
 import { luxasrJsonToCues, cuesToSrt, type SrtCue } from "@/lib/subtitles/luxasrToSrt";
 import { shortenCues } from "@/lib/subtitles/shortenSrt";
-import { RecorderCard } from "@/components/dashboard/RecorderCard";
+
 
 const indexSearchSchema = z.object({
   recording: z.string().uuid().optional(),
@@ -710,10 +710,6 @@ function Dashboard() {
       <main className="mx-auto max-w-7xl px-6 py-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         {/* LEFT: Controls */}
         <div className="space-y-6">
-          <RecorderCard
-            onUseRecording={(f) => setFile(f)}
-            onLog={(m) => appendLog(m)}
-          />
 
           <Card>
             <CardHeader className="pb-3">
