@@ -26,6 +26,7 @@ import { onFfmpegLog, cancelFFmpeg } from "@/lib/ffmpeg/client";
 import { luxasrJsonToCues, cuesToSrt, type SrtCue } from "@/lib/subtitles/luxasrToSrt";
 import { shortenCues } from "@/lib/subtitles/shortenSrt";
 import { startRecording } from "@/lib/hls/recorder";
+import { SubtitlePreview } from "@/components/cutter/SubtitlePreview";
 
 
 
