@@ -13,11 +13,14 @@ export const Route = createFileRoute("/api/public/hooks/cleanup-recordings")({
     handlers: {
       OPTIONS: async () => new Response(null, { status: 204, headers: CORS }),
       POST: async ({ request }: { request: Request }) => {
-        // Anyone can POST — the endpoint only deletes what's already past retention,
-        // so it's safe to be idempotent/public. We still gate lightly on the anon key.
-        const key = request.headers.get("apikey") ?? "";
-        const expected = process.env.SUPABASE_PUBLISHABLE_KEY ?? "";
-        if (expected && key !== expected) {
+        // Gate on a dedicated server-only secret (CRON_SECRET). The Supabase
+        // publishable key is shipped to every browser and is not a credential.
+        const provided =
+          request.headers.get("x-cron-secret") ??
+          request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
+          "";
+        const expected = process.env.CRON_SECRET ?? "";
+        if (!expected || provided !== expected) {
           return new Response(JSON.stringify({ error: "unauthorized" }), {
             status: 401,
             headers: { "Content-Type": "application/json", ...CORS },
