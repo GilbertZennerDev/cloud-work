@@ -16,6 +16,7 @@ import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiHlsProxyRouteImport } from './routes/api/hls-proxy'
 import { Route as ApiAsrRouteImport } from './routes/api/asr'
+import { Route as ApiPublicHooksWorkerRecordingRouteImport } from './routes/api/public/hooks/worker-recording'
 import { Route as ApiPublicHooksCleanupRecordingsRouteImport } from './routes/api/public/hooks/cleanup-recordings'
 
 const StudioRoute = StudioRouteImport.update({
@@ -53,6 +54,12 @@ const ApiAsrRoute = ApiAsrRouteImport.update({
   path: '/api/asr',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicHooksWorkerRecordingRoute =
+  ApiPublicHooksWorkerRecordingRouteImport.update({
+    id: '/api/public/hooks/worker-recording',
+    path: '/api/public/hooks/worker-recording',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicHooksCleanupRecordingsRoute =
   ApiPublicHooksCleanupRecordingsRouteImport.update({
     id: '/api/public/hooks/cleanup-recordings',
@@ -69,6 +76,7 @@ export interface FileRoutesByFullPath {
   '/api/asr': typeof ApiAsrRoute
   '/api/hls-proxy': typeof ApiHlsProxyRoute
   '/api/public/hooks/cleanup-recordings': typeof ApiPublicHooksCleanupRecordingsRoute
+  '/api/public/hooks/worker-recording': typeof ApiPublicHooksWorkerRecordingRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -79,6 +87,7 @@ export interface FileRoutesByTo {
   '/api/asr': typeof ApiAsrRoute
   '/api/hls-proxy': typeof ApiHlsProxyRoute
   '/api/public/hooks/cleanup-recordings': typeof ApiPublicHooksCleanupRecordingsRoute
+  '/api/public/hooks/worker-recording': typeof ApiPublicHooksWorkerRecordingRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -90,6 +99,7 @@ export interface FileRoutesById {
   '/api/asr': typeof ApiAsrRoute
   '/api/hls-proxy': typeof ApiHlsProxyRoute
   '/api/public/hooks/cleanup-recordings': typeof ApiPublicHooksCleanupRecordingsRoute
+  '/api/public/hooks/worker-recording': typeof ApiPublicHooksWorkerRecordingRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -102,6 +112,7 @@ export interface FileRouteTypes {
     | '/api/asr'
     | '/api/hls-proxy'
     | '/api/public/hooks/cleanup-recordings'
+    | '/api/public/hooks/worker-recording'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -112,6 +123,7 @@ export interface FileRouteTypes {
     | '/api/asr'
     | '/api/hls-proxy'
     | '/api/public/hooks/cleanup-recordings'
+    | '/api/public/hooks/worker-recording'
   id:
     | '__root__'
     | '/'
@@ -122,6 +134,7 @@ export interface FileRouteTypes {
     | '/api/asr'
     | '/api/hls-proxy'
     | '/api/public/hooks/cleanup-recordings'
+    | '/api/public/hooks/worker-recording'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -133,6 +146,7 @@ export interface RootRouteChildren {
   ApiAsrRoute: typeof ApiAsrRoute
   ApiHlsProxyRoute: typeof ApiHlsProxyRoute
   ApiPublicHooksCleanupRecordingsRoute: typeof ApiPublicHooksCleanupRecordingsRoute
+  ApiPublicHooksWorkerRecordingRoute: typeof ApiPublicHooksWorkerRecordingRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -186,6 +200,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAsrRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/hooks/worker-recording': {
+      id: '/api/public/hooks/worker-recording'
+      path: '/api/public/hooks/worker-recording'
+      fullPath: '/api/public/hooks/worker-recording'
+      preLoaderRoute: typeof ApiPublicHooksWorkerRecordingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/hooks/cleanup-recordings': {
       id: '/api/public/hooks/cleanup-recordings'
       path: '/api/public/hooks/cleanup-recordings'
@@ -205,6 +226,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAsrRoute: ApiAsrRoute,
   ApiHlsProxyRoute: ApiHlsProxyRoute,
   ApiPublicHooksCleanupRecordingsRoute: ApiPublicHooksCleanupRecordingsRoute,
+  ApiPublicHooksWorkerRecordingRoute: ApiPublicHooksWorkerRecordingRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
