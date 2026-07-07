@@ -961,6 +961,55 @@ function Dashboard() {
 
           <Card>
             <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Camera className="h-4 w-4" /> Live snapshot from HLS
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Grab the last <b>N seconds</b> of any HLS live stream directly into <b>Source video</b> — no need to record via Studio first.
+              </p>
+              <div className="space-y-1.5">
+                <Label htmlFor="snap-url">HLS playlist URL</Label>
+                <Input
+                  id="snap-url"
+                  value={snapshotUrl}
+                  onChange={(e) => setSnapshotUrl(e.target.value)}
+                  disabled={snapshotBusy}
+                  placeholder="https://…/playlist.m3u8"
+                />
+              </div>
+              <div className="grid grid-cols-[1fr_auto] gap-2 items-end">
+                <div className="space-y-1.5">
+                  <Label htmlFor="snap-secs">Duration (seconds)</Label>
+                  <Input
+                    id="snap-secs"
+                    type="number"
+                    min={5}
+                    max={300}
+                    value={snapshotSeconds}
+                    onChange={(e) => setSnapshotSeconds(Math.max(5, Math.min(300, Number(e.target.value) || 30)))}
+                    disabled={snapshotBusy}
+                  />
+                </div>
+                <Button onClick={runSnapshot} disabled={snapshotBusy || !snapshotUrl}>
+                  {snapshotBusy ? (
+                    <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Capturing…</>
+                  ) : (
+                    <><Camera className="h-4 w-4 mr-2" /> Snapshot</>
+                  )}
+                </Button>
+              </div>
+              {snapshotBusy && snapshotProgress && (
+                <p className="text-xs text-muted-foreground font-mono truncate">{snapshotProgress}</p>
+              )}
+            </CardContent>
+          </Card>
+
+
+
+          <Card>
+            <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center justify-between">
                 <span>Find cut points via transcript</span>
                 <Button
