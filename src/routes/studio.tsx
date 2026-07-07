@@ -1,6 +1,6 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Radio, Square, Loader2, Calendar, Scissors, Library, Film, Send } from "lucide-react";
+import { Radio, Square, Loader2, Calendar, Scissors, Library, Film, Save } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,7 +60,6 @@ function StudioError({ error, reset }: { error: Error; reset: () => void }) {
 }
 
 function Studio() {
-  const navigate = useNavigate();
   const [url, setUrl] = useState(DEFAULT_URL);
   const [autoMode, setAutoMode] = useState(true);
   const [logs, setLogs] = useState<string[]>([]);
@@ -158,17 +157,17 @@ function Studio() {
           sizeBytes: snap.blob.size,
         },
       });
-      appendLog(`[REC] Live snapshot uploaded → opening in Cutter`);
-      toast.success("Opening in Cutter", { id: t });
-      navigate({ to: "/", search: { recording: created.id } as never });
+      appendLog(`[REC] Live snapshot saved to Recordings`);
+      toast.success("Snapshot saved — open Recordings in a new tab to cut it", { id: t, duration: 6000 });
     } catch (err) {
       const msg = (err as Error).message;
-      appendLog(`[REC] Copy to Cutter failed: ${msg}`);
-      toast.error(`Copy failed: ${msg}`, { id: t });
+      appendLog(`[REC] Save snapshot failed: ${msg}`);
+      toast.error(`Save failed: ${msg}`, { id: t });
     } finally {
       setCopying(false);
     }
-  }, [appendLog, copying, navigate, url]);
+  }, [appendLog, copying, url]);
+
 
 
   // Auto-start / auto-stop based on schedule
@@ -320,9 +319,9 @@ function Studio() {
                   {copying ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   ) : (
-                    <Send className="h-4 w-4 mr-2" />
+                    <Save className="h-4 w-4 mr-2" />
                   )}
-                  Copy to Cutter
+                  Save snapshot to Recordings
                 </Button>
               )}
               {autoMode && !recording && (
