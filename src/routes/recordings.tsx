@@ -65,6 +65,16 @@ function RecordingsPage() {
     navigate({ to: "/", search: { recording: r.id } as never });
   };
 
+  const [preview, setPreview] = useState<{ url: string; title: string } | null>(null);
+  const previewMut = useMutation({
+    mutationFn: async (r: RecordingRow) => {
+      const { url } = await getRecordingDownloadUrl({ data: { id: r.id } });
+      setPreview({ url, title: r.title ?? r.storage_path.split("/").pop() ?? "Recording" });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadProgress, setUploadProgress] = useState<{ name: string; done: number; total: number } | null>(null);
 
