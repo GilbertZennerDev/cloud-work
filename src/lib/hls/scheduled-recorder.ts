@@ -28,7 +28,7 @@ export interface ScheduledRecorderHandle {
   getChunkCount: () => number;
   isRunning: () => boolean;
   /** Snapshot bytes buffered in the current in-flight chunk (null if none). */
-  snapshotCurrent: () => { blob: Blob; startedAt: Date; chunkIndex: number } | null;
+  snapshotCurrent: () => Promise<{ blob: Blob; startedAt: Date; chunkIndex: number } | null>;
 }
 
 /**
