@@ -2,34 +2,26 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
-async function assertSuperAdmin(context: { supabase: any; userId: string }) {
-  const { data, error } = await context.supabase
-    .from("user_roles")
-    .select("role")
-    .eq("user_id", context.userId)
-    .eq("role", "super_admin")
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  if (!data) throw new Error("Forbidden: super admin required");
-}
-
 /** Returns current user context: whether they are super admin and their group (if any). */
 export const getMyAccessContext = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const [roleRes, memRes] = await Promise.all([
-      context.supabase
+      supabaseAdmin
         .from("user_roles")
         .select("role")
         .eq("user_id", context.userId)
         .eq("role", "super_admin")
         .maybeSingle(),
-      context.supabase
+      supabaseAdmin
         .from("group_members")
         .select("group_id, groups(id,name,slug,is_active)")
         .eq("user_id", context.userId)
         .maybeSingle(),
     ]);
+    if (roleRes.error) throw new Error(`Could not read admin role: ${roleRes.error.message}`);
+    if (memRes.error) throw new Error(`Could not read group membership: ${memRes.error.message}`);
     return {
       userId: context.userId,
       isSuperAdmin: !!roleRes.data,
@@ -49,8 +41,15 @@ export const getMyAccessContext = createServerFn({ method: "GET" })
 export const listGroups = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    await assertSuperAdmin(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: adminRole, error: adminError } = await supabaseAdmin
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", context.userId)
+      .eq("role", "super_admin")
+      .maybeSingle();
+    if (adminError) throw new Error(adminError.message);
+    if (!adminRole) throw new Error("Forbidden: super admin required");
     const { data: groups, error } = await supabaseAdmin
       .from("groups")
       .select("id, name, slug, notes, is_active, created_at")
@@ -94,8 +93,15 @@ export const createGroup = createServerFn({ method: "POST" })
     z.object({ name: z.string().trim().min(1).max(80), notes: z.string().max(500).optional() }).parse(i),
   )
   .handler(async ({ data, context }) => {
-    await assertSuperAdmin(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: adminRole, error: adminError } = await supabaseAdmin
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", context.userId)
+      .eq("role", "super_admin")
+      .maybeSingle();
+    if (adminError) throw new Error(adminError.message);
+    if (!adminRole) throw new Error("Forbidden: super admin required");
     const base = slugify(data.name);
     let slug = base;
     for (let i = 1; i < 20; i++) {
@@ -125,8 +131,15 @@ export const updateGroup = createServerFn({ method: "POST" })
       .parse(i),
   )
   .handler(async ({ data, context }) => {
-    await assertSuperAdmin(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: adminRole, error: adminError } = await supabaseAdmin
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", context.userId)
+      .eq("role", "super_admin")
+      .maybeSingle();
+    if (adminError) throw new Error(adminError.message);
+    if (!adminRole) throw new Error("Forbidden: super admin required");
     const patch: { name?: string; notes?: string | null; is_active?: boolean } = {};
     if (data.name !== undefined) patch.name = data.name;
     if (data.notes !== undefined) patch.notes = data.notes;
@@ -140,8 +153,15 @@ export const deleteGroup = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((i) => z.object({ id: z.string().uuid() }).parse(i))
   .handler(async ({ data, context }) => {
-    await assertSuperAdmin(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: adminRole, error: adminError } = await supabaseAdmin
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", context.userId)
+      .eq("role", "super_admin")
+      .maybeSingle();
+    if (adminError) throw new Error(adminError.message);
+    if (!adminRole) throw new Error("Forbidden: super admin required");
     const { error } = await supabaseAdmin.from("groups").delete().eq("id", data.id);
     if (error) throw new Error(error.message);
     return { ok: true };
@@ -153,8 +173,15 @@ export const listGroupMembers = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((i) => z.object({ groupId: z.string().uuid() }).parse(i))
   .handler(async ({ data, context }) => {
-    await assertSuperAdmin(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: adminRole, error: adminError } = await supabaseAdmin
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", context.userId)
+      .eq("role", "super_admin")
+      .maybeSingle();
+    if (adminError) throw new Error(adminError.message);
+    if (!adminRole) throw new Error("Forbidden: super admin required");
     const { data: rows, error } = await supabaseAdmin
       .from("group_members")
       .select("user_id, created_at")
@@ -187,8 +214,15 @@ export const addUserToGroup = createServerFn({ method: "POST" })
       .parse(i),
   )
   .handler(async ({ data, context }) => {
-    await assertSuperAdmin(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: adminRole, error: adminError } = await supabaseAdmin
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", context.userId)
+      .eq("role", "super_admin")
+      .maybeSingle();
+    if (adminError) throw new Error(adminError.message);
+    if (!adminRole) throw new Error("Forbidden: super admin required");
 
     // Find existing user by email
     let userId: string | null = null;
@@ -229,8 +263,15 @@ export const removeUserFromGroup = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((i) => z.object({ userId: z.string().uuid() }).parse(i))
   .handler(async ({ data, context }) => {
-    await assertSuperAdmin(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: adminRole, error: adminError } = await supabaseAdmin
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", context.userId)
+      .eq("role", "super_admin")
+      .maybeSingle();
+    if (adminError) throw new Error(adminError.message);
+    if (!adminRole) throw new Error("Forbidden: super admin required");
     const { error } = await supabaseAdmin.from("group_members").delete().eq("user_id", data.userId);
     if (error) throw new Error(error.message);
     return { ok: true };
@@ -240,8 +281,15 @@ export const sendPasswordReset = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((i) => z.object({ email: z.string().email() }).parse(i))
   .handler(async ({ data, context }) => {
-    await assertSuperAdmin(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: adminRole, error: adminError } = await supabaseAdmin
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", context.userId)
+      .eq("role", "super_admin")
+      .maybeSingle();
+    if (adminError) throw new Error(adminError.message);
+    if (!adminRole) throw new Error("Forbidden: super admin required");
     // generate a recovery link and let Supabase email it
     const { error } = await supabaseAdmin.auth.admin.generateLink({
       type: "recovery",
