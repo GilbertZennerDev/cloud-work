@@ -280,14 +280,14 @@ function escapeAssText(text: string): string {
     .replace(/\r?\n/g, "\\N");
 }
 
-export interface AssCue { start: number; end: number; text: string }
+export interface AssCue { start: number; end: number; text: string; xPct?: number; yPct?: number }
 
 export function cuesToAss(cues: AssCue[], style: SubtitleStyle): string {
   const w = Math.max(1, Math.round(style.videoWidth));
   const h = Math.max(1, Math.round(style.videoHeight));
   const outline = Math.max(0, style.outline);
-  const posX = Math.round((style.xPct / 100) * w);
-  const posY = Math.round((style.yPct / 100) * h);
+  const defaultX = Math.round((style.xPct / 100) * w);
+  const defaultY = Math.round((style.yPct / 100) * h);
 
   // Alignment=5 => middle-center anchor, so \pos(x,y) places the centre of the text at (x,y).
   const styleLine =
@@ -296,10 +296,11 @@ export function cuesToAss(cues: AssCue[], style: SubtitleStyle): string {
 
   const events = cues
     .filter((c) => c.end > c.start && c.text.trim().length > 0)
-    .map(
-      (c) =>
-        `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Default,,0,0,0,,{\\pos(${posX},${posY})}${escapeAssText(c.text)}`,
-    )
+    .map((c) => {
+      const px = typeof c.xPct === "number" ? Math.round((c.xPct / 100) * w) : defaultX;
+      const py = typeof c.yPct === "number" ? Math.round((c.yPct / 100) * h) : defaultY;
+      return `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Default,,0,0,0,,{\\pos(${px},${py})}${escapeAssText(c.text)}`;
+    })
     .join("\n");
 
   return [

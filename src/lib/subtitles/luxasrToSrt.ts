@@ -20,6 +20,9 @@ export interface SrtCue {
   start: number;
   end: number;
   text: string;
+  /** Optional per-cue subtitle position (% of video width/height). Overrides global x/y. */
+  xPct?: number;
+  yPct?: number;
 }
 
 function extractSegments(json: unknown): LuxSegment[] {
