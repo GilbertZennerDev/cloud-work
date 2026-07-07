@@ -1,16 +1,23 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Library, Scissors, Radio, Download, Trash2, ArrowRight, Loader2, Film } from "lucide-react";
+import { useRef, useState } from "react";
+import { Library, Scissors, Radio, Download, Trash2, ArrowRight, Loader2, Film, Upload } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 import {
   listRecordings,
   deleteRecording,
   getRecordingDownloadUrl,
+  createRecording,
+  markRecordingReady,
+  markRecordingFailed,
   type RecordingRow,
 } from "@/lib/recordings.functions";
+
+const RECORDINGS_BUCKET = "recordings";
 
 export const Route = createFileRoute("/recordings")({
   head: () => ({
@@ -56,6 +63,70 @@ function RecordingsPage() {
     navigate({ to: "/", search: { recording: r.id } as never });
   };
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadProgress, setUploadProgress] = useState<{ name: string; done: number; total: number } | null>(null);
+
+  const upload = useMutation({
+    mutationFn: async (files: File[]) => {
+      const rows = data ?? [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const now = new Date();
+        const sessionDate = new Date(file.lastModified || now).toISOString().slice(0, 10);
+        const existingForDate = rows.filter((r) => r.session_date === sessionDate);
+        const maxIdx = existingForDate.reduce((m, r) => Math.max(m, r.chunk_index), -1);
+        const chunkIndex = maxIdx + 1 + i;
+        const ext = (file.name.split(".").pop() || "mp4").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 8) || "mp4";
+        setUploadProgress({ name: file.name, done: i, total: files.length });
+        const created = await createRecording({
+          data: {
+            sessionDate,
+            chunkIndex,
+            startedAt: new Date(file.lastModified || now).toISOString(),
+            title: file.name,
+            fileExt: ext,
+          },
+        });
+        try {
+          const { error } = await supabase.storage
+            .from(RECORDINGS_BUCKET)
+            .uploadToSignedUrl(created.path, created.token, file, {
+              contentType: file.type || "video/mp4",
+            });
+          if (error) throw error;
+          await markRecordingReady({
+            data: {
+              id: created.id,
+              endedAt: new Date().toISOString(),
+              sizeBytes: file.size,
+            },
+          });
+        } catch (err) {
+          await markRecordingFailed({
+            data: { id: created.id, error: (err as Error).message.slice(0, 500) },
+          }).catch(() => {});
+          throw err;
+        }
+      }
+    },
+    onSuccess: (_, files) => {
+      toast.success(`Uploaded ${files.length} file${files.length === 1 ? "" : "s"}`);
+      qc.invalidateQueries({ queryKey: ["recordings"] });
+    },
+    onError: (e: Error) => toast.error(`Upload failed: ${e.message}`),
+    onSettled: () => setUploadProgress(null),
+  });
+
+  const onFilesPicked = (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    const files = Array.from(list).filter((f) => f.type.startsWith("video/") || /\.(mp4|mov|mkv|webm|ts|m4v|avi)$/i.test(f.name));
+    if (files.length === 0) {
+      toast.error("Please select video files");
+      return;
+    }
+    upload.mutate(files);
+  };
+
   const grouped = groupBySession(data ?? []);
 
   return (
@@ -88,14 +159,54 @@ function RecordingsPage() {
       </header>
 
       <main className="mx-auto max-w-5xl px-6 py-6 space-y-6">
-        <div className="flex items-center justify-between">
+        <div
+          className="flex items-center justify-between gap-3 flex-wrap"
+          onDragOver={(e) => {
+            e.preventDefault();
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            onFilesPicked(e.dataTransfer.files);
+          }}
+        >
           <div className="text-sm text-muted-foreground">
             {data ? `${data.length} chunk${data.length === 1 ? "" : "s"}` : "…"}
+            {uploadProgress && (
+              <span className="ml-2">
+                · Uploading {uploadProgress.done + 1}/{uploadProgress.total}: {uploadProgress.name}
+              </span>
+            )}
           </div>
-          <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
-            {isFetching ? <Loader2 className="h-3 w-3 animate-spin mr-2" /> : null}
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="video/*,.ts,.mkv"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                onFilesPicked(e.target.files);
+                if (fileInputRef.current) fileInputRef.current.value = "";
+              }}
+            />
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={upload.isPending}
+            >
+              {upload.isPending ? (
+                <Loader2 className="h-3 w-3 animate-spin mr-2" />
+              ) : (
+                <Upload className="h-3 w-3 mr-2" />
+              )}
+              Upload video
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
+              {isFetching ? <Loader2 className="h-3 w-3 animate-spin mr-2" /> : null}
+              Refresh
+            </Button>
+          </div>
         </div>
 
         {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
