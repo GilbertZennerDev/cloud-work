@@ -254,6 +254,62 @@ function Dashboard() {
     })();
   }, [search.recording, navigate]);
 
+  const runSnapshot = useCallback(async () => {
+    if (snapshotBusy || !snapshotUrl) return;
+    setSnapshotBusy(true);
+    setSnapshotProgress("Starting HLS recorder…");
+    const t = toast.loading(`Grabbing ${snapshotSeconds}s from live stream…`);
+    let handle: Awaited<ReturnType<typeof startRecording>> | null = null;
+    try {
+      handle = await startRecording(snapshotUrl);
+      handle.onLog((m) => setSnapshotProgress(m));
+      handle.onStatus((s) => {
+        if (s.bytes > 0) {
+          setSnapshotProgress(
+            `Buffering: ${s.segments} segment${s.segments === 1 ? "" : "s"} · ${(s.bytes / 1024 / 1024).toFixed(1)} MB`,
+          );
+        }
+      });
+      const secs = Math.max(5, Math.min(300, snapshotSeconds));
+      // Wait until we have at least some bytes or we hit the target duration.
+      const started = Date.now();
+      while (Date.now() - started < secs * 1000) {
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      setSnapshotProgress("Finalizing snapshot…");
+      const tsBlob = await handle.stop();
+      handle = null;
+      if (tsBlob.size === 0) throw new Error("No bytes captured — check the URL");
+      setSnapshotProgress(`Remuxing ${(tsBlob.size / 1024 / 1024).toFixed(1)} MB to MP4…`);
+      const mp4 = await remuxTsToMp4(tsBlob);
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const name = `live-snapshot_${stamp}.mp4`;
+      const f = new File([mp4 as BlobPart], name, { type: "video/mp4" });
+      setFile(f);
+      setSourceTitle(`Live snapshot · ${new Date().toLocaleTimeString()}`);
+      setRecordingId(null);
+      setRawCues([]);
+      setCues([]);
+      setSelectedCues(new Set());
+      setSrtText(null);
+      setClipBlob(null);
+      setAudioBlob(null);
+      setSubbedBlob(null);
+      setSourcePreviewBlob(null);
+      setSourcePreviewError(null);
+      handledRecordingRef.current = null;
+      toast.success(`Loaded ${(f.size / 1024 / 1024).toFixed(1)} MB of live footage`, { id: t });
+    } catch (err) {
+      toast.error(`Snapshot failed: ${(err as Error).message}`, { id: t });
+    } finally {
+      try { await handle?.stop(); } catch {}
+      setSnapshotBusy(false);
+      setSnapshotProgress("");
+    }
+  }, [snapshotBusy, snapshotUrl, snapshotSeconds]);
+
+
+
 
 
   const [segments, setSegments] = useState<Array<{ start: string; end: string }>>([
