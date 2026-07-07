@@ -159,14 +159,54 @@ function RecordingsPage() {
       </header>
 
       <main className="mx-auto max-w-5xl px-6 py-6 space-y-6">
-        <div className="flex items-center justify-between">
+        <div
+          className="flex items-center justify-between gap-3 flex-wrap"
+          onDragOver={(e) => {
+            e.preventDefault();
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            onFilesPicked(e.dataTransfer.files);
+          }}
+        >
           <div className="text-sm text-muted-foreground">
             {data ? `${data.length} chunk${data.length === 1 ? "" : "s"}` : "…"}
+            {uploadProgress && (
+              <span className="ml-2">
+                · Uploading {uploadProgress.done + 1}/{uploadProgress.total}: {uploadProgress.name}
+              </span>
+            )}
           </div>
-          <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
-            {isFetching ? <Loader2 className="h-3 w-3 animate-spin mr-2" /> : null}
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="video/*,.ts,.mkv"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                onFilesPicked(e.target.files);
+                if (fileInputRef.current) fileInputRef.current.value = "";
+              }}
+            />
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={upload.isPending}
+            >
+              {upload.isPending ? (
+                <Loader2 className="h-3 w-3 animate-spin mr-2" />
+              ) : (
+                <Upload className="h-3 w-3 mr-2" />
+              )}
+              Upload video
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
+              {isFetching ? <Loader2 className="h-3 w-3 animate-spin mr-2" /> : null}
+              Refresh
+            </Button>
+          </div>
         </div>
 
         {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
