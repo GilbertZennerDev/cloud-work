@@ -232,15 +232,14 @@ function Dashboard() {
       if (mode !== "subs-only") {
         setStage("cutting");
         if (!durationInfo.ok) throw new Error(durationInfo.msg);
-        const s = parseTimeToSeconds(start);
-        const e = parseTimeToSeconds(end);
-        const cut = await cutVideo(file, s, e, setProgress, { lowPerf, maxHeight });
+        const cut = await cutAndConcat(file, durationInfo.parsed, setProgress, { lowPerf, maxHeight });
         checkCancel();
         const clip = new Blob([cut as BlobPart], { type: "video/mp4" });
         setClipBlob(clip);
         workingVideo = clip;
         setProgress(1);
       }
+
 
       if (mode === "cut-only") {
         setStage("done");
