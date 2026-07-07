@@ -576,6 +576,17 @@ function Dashboard() {
                       min={14} max={64} step={1} value={[fontSize]}
                       onValueChange={(v) => setFontSize(v[0])}
                     />
+                    <div className="mt-2 rounded-md border bg-black aspect-video flex items-end justify-center p-3 overflow-hidden">
+                      <span
+                        className="font-sans font-semibold text-white text-center leading-tight"
+                        style={{
+                          fontSize: `${fontSize}px`,
+                          textShadow: "0 0 4px #000, 2px 2px 3px #000, -1px -1px 2px #000",
+                        }}
+                      >
+                        Beispill Ennertitlen
+                      </span>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
