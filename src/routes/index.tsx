@@ -151,6 +151,7 @@ function Dashboard() {
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [srtText, setSrtText] = useState<string | null>(null);
   const [subbedBlob, setSubbedBlob] = useState<Blob | null>(null);
+  const [cues, setCues] = useState<SrtCue[]>([]);
 
   const logRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
