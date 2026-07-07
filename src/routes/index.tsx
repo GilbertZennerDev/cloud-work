@@ -458,12 +458,14 @@ function Dashboard() {
   };
 
   const setStartFromSeconds = (t: number) => {
-    setStart(formatSeconds(t));
-    setTimeout(() => seekTo(startVideoRef, formatSeconds(t)), 50);
+    const v = formatSeconds(t);
+    updateSeg(activeSeg, { start: v });
+    setTimeout(() => seekTo(startVideoRef, v), 50);
   };
   const setEndFromSeconds = (t: number) => {
-    setEnd(formatSeconds(t));
-    setTimeout(() => seekTo(endVideoRef, formatSeconds(t)), 50);
+    const v = formatSeconds(t);
+    updateSeg(activeSeg, { end: v });
+    setTimeout(() => seekTo(endVideoRef, v), 50);
   };
 
   const canRun = !!file && !isRunning;
