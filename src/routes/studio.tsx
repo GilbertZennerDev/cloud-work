@@ -315,6 +315,16 @@ function Studio() {
                   <Square className="h-4 w-4 mr-2" /> Stop
                 </Button>
               )}
+              {recording && (
+                <Button variant="secondary" onClick={copyToCutter} disabled={copying}>
+                  {copying ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4 mr-2" />
+                  )}
+                  Copy to Cutter
+                </Button>
+              )}
               {autoMode && !recording && (
                 <span className="text-xs text-muted-foreground self-center inline-flex items-center gap-1">
                   <Loader2 className="h-3 w-3 animate-spin" /> Waiting for {formatLuxTime(sessionWindow.start)}
