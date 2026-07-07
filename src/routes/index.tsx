@@ -26,7 +26,14 @@ import { cutAndConcat, extractAudioMp3, burnSubtitles, remuxTsToMp4, cuesToAss, 
 import { onFfmpegLog, cancelFFmpeg } from "@/lib/ffmpeg/client";
 import { luxasrJsonToCues, cuesToSrt, type SrtCue } from "@/lib/subtitles/luxasrToSrt";
 import { shortenCues } from "@/lib/subtitles/shortenSrt";
-import { startRecording } from "@/lib/hls/recorder";
+import {
+  ensureSharedRecorder,
+  snapshotSharedRecorderDelta,
+  getSharedRecorderInfo,
+  getSharedStreamUrl,
+  setSharedStreamUrl,
+  DEFAULT_STREAM_URL,
+} from "@/lib/hls/shared-recorder";
 import { SubtitlePreview } from "@/components/cutter/SubtitlePreview";
 
 
