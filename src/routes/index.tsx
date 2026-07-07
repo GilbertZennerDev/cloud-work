@@ -21,11 +21,12 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 
 import { parseTimeToSeconds, formatSeconds } from "@/lib/subtitles/parseTime";
-import { cutAndConcat, extractAudioMp3, burnSubtitles, remuxTsToMp4 } from "@/lib/ffmpeg/operations";
+import { cutAndConcat, extractAudioMp3, burnSubtitles, remuxTsToMp4, cuesToAss, getVideoDimensions } from "@/lib/ffmpeg/operations";
 import { onFfmpegLog, cancelFFmpeg } from "@/lib/ffmpeg/client";
 import { luxasrJsonToCues, cuesToSrt, type SrtCue } from "@/lib/subtitles/luxasrToSrt";
 import { shortenCues } from "@/lib/subtitles/shortenSrt";
 import { startRecording } from "@/lib/hls/recorder";
+import { SubtitlePreview } from "@/components/cutter/SubtitlePreview";
 
 
 
@@ -329,6 +330,9 @@ function Dashboard() {
   };
   const [mode, setMode] = useState<Mode>("full");
   const [fontSize, setFontSize] = useState(28);
+  const [subX, setSubX] = useState(50); // % from left (centre of text)
+  const [subY, setSubY] = useState(88); // % from top (centre of text)
+  const [subOutline, setSubOutline] = useState(2); // px
   const [maxSentences, setMaxSentences] = useState(2);
   const [maxChars, setMaxChars] = useState(90);
   const [burnIn, setBurnIn] = useState(true);
@@ -546,7 +550,12 @@ function Dashboard() {
       if (burnIn) {
         setStage("burning");
         setProgress(0);
-        const subbed = await burnSubtitles(workingVideo, srt, fontSize, setProgress, { lowPerf, maxHeight });
+        const dims = await getVideoDimensions(workingVideo);
+        const ass = cuesToAss(workingCues, {
+          fontSize, outline: subOutline, xPct: subX, yPct: subY,
+          videoWidth: dims.width, videoHeight: dims.height,
+        });
+        const subbed = await burnSubtitles(workingVideo, ass, setProgress, { lowPerf, maxHeight });
         checkCancel();
         setSubbedBlob(new Blob([subbed as BlobPart], { type: "video/mp4" }));
         setProgress(1);
@@ -755,7 +764,12 @@ function Dashboard() {
 
       setStage("burning");
       setProgress(0);
-      const subbed = await burnSubtitles(clip, srt, fontSize, setProgress, { lowPerf, maxHeight });
+      const dims = await getVideoDimensions(clip);
+      const ass = cuesToAss(remapped, {
+        fontSize, outline: subOutline, xPct: subX, yPct: subY,
+        videoWidth: dims.width, videoHeight: dims.height,
+      });
+      const subbed = await burnSubtitles(clip, ass, setProgress, { lowPerf, maxHeight });
       checkCancel();
       setSubbedBlob(new Blob([subbed as BlobPart], { type: "video/mp4" }));
       setProgress(1);
@@ -1268,16 +1282,47 @@ function Dashboard() {
                       min={14} max={64} step={1} value={[fontSize]}
                       onValueChange={(v) => setFontSize(v[0])}
                     />
-                    <div className="mt-2 rounded-md border bg-black aspect-video flex items-end justify-center p-3 overflow-hidden">
-                      <span
-                        className="font-sans font-semibold text-white text-center leading-tight"
-                        style={{
-                          fontSize: `${fontSize}px`,
-                          textShadow: "0 0 4px #000, 2px 2px 3px #000, -1px -1px 2px #000",
-                        }}
-                      >
-                        Beispill Ennertitlen
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <Label>Subtitle position &amp; outline</Label>
+                      <span className="text-xs text-muted-foreground">
+                        x {subX}% · y {subY}% · outline {subOutline}px
                       </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-2">
+                      Zeih den Text am Preview, oder benotz d'Sliders. Iwwerholl gëtt op déi geschnidde Videosgréisst berechent.
+                    </p>
+                    <SubtitlePreview
+                      xPct={subX}
+                      yPct={subY}
+                      fontSize={fontSize}
+                      outline={subOutline}
+                      onChange={(x, y) => { setSubX(x); setSubY(y); }}
+                    />
+                    <div className="mt-3 space-y-3">
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs">Horizontal (X)</Label>
+                          <span className="text-xs text-muted-foreground">{subX}%</span>
+                        </div>
+                        <Slider min={0} max={100} step={1} value={[subX]} onValueChange={(v) => setSubX(v[0])} />
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs">Vertikal (Y)</Label>
+                          <span className="text-xs text-muted-foreground">{subY}%</span>
+                        </div>
+                        <Slider min={0} max={100} step={1} value={[subY]} onValueChange={(v) => setSubY(v[0])} />
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs">Schwaarze Bord (Outline)</Label>
+                          <span className="text-xs text-muted-foreground">{subOutline}px</span>
+                        </div>
+                        <Slider min={0} max={8} step={1} value={[subOutline]} onValueChange={(v) => setSubOutline(v[0])} />
+                      </div>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
