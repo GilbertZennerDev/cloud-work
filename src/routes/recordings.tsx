@@ -1,16 +1,23 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Library, Scissors, Radio, Download, Trash2, ArrowRight, Loader2, Film } from "lucide-react";
+import { useRef, useState } from "react";
+import { Library, Scissors, Radio, Download, Trash2, ArrowRight, Loader2, Film, Upload } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 import {
   listRecordings,
   deleteRecording,
   getRecordingDownloadUrl,
+  createRecording,
+  markRecordingReady,
+  markRecordingFailed,
   type RecordingRow,
 } from "@/lib/recordings.functions";
+
+const RECORDINGS_BUCKET = "recordings";
 
 export const Route = createFileRoute("/recordings")({
   head: () => ({
