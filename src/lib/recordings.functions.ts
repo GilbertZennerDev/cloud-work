@@ -12,6 +12,7 @@ const CreateInput = z.object({
   startedAt: z.string(),
   sourceUrl: z.string().url().optional(),
   title: z.string().max(200).optional(),
+  fileExt: z.string().regex(/^[a-zA-Z0-9]{1,8}$/).optional(),
 });
 
 const MarkReadyInput = z.object({
