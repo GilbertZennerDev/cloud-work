@@ -9,6 +9,8 @@ export interface RecorderStatus {
 
 export interface RecorderHandle {
   stop: () => Promise<Blob>;
+  /** Snapshot currently buffered bytes as an MPEG-TS blob without stopping. */
+  snapshot: () => Blob;
   onStatus: (cb: (s: RecorderStatus) => void) => void;
   onLog: (cb: (msg: string) => void) => void;
 }
