@@ -83,6 +83,66 @@ export async function cutVideo(
   }
 }
 
+export async function cutAndConcat(
+  file: File | Blob,
+  segments: Array<{ start: number; end: number }>,
+  onP?: ProgressCb,
+  perf: PerfOptions = {},
+): Promise<Uint8Array> {
+  if (segments.length === 0) throw new Error("No segments to cut");
+  for (const s of segments) {
+    if (s.end <= s.start) throw new Error("End must be greater than start in every segment");
+  }
+  if (segments.length === 1) {
+    return cutVideo(file, segments[0].start, segments[0].end, onP, perf);
+  }
+  const ffmpeg = await getFFmpeg();
+  const off = onP ? onProgress(ffmpeg, onP) : () => {};
+  const inputName = "input.bin";
+  const outputName = "clip.mp4";
+  await ffmpeg.writeFile(inputName, await fetchFile(file));
+  try {
+    const parts: string[] = [];
+    const labels: string[] = [];
+    segments.forEach((s, i) => {
+      parts.push(`[0:v]trim=start=${s.start}:end=${s.end},setpts=PTS-STARTPTS[v${i}]`);
+      parts.push(`[0:a]atrim=start=${s.start}:end=${s.end},asetpts=PTS-STARTPTS[a${i}]`);
+      labels.push(`[v${i}][a${i}]`);
+    });
+    parts.push(`${labels.join("")}concat=n=${segments.length}:v=1:a=1[outv][outa]`);
+    const filter = parts.join(";");
+    const args = [
+      "-i", inputName,
+      "-filter_complex", filter,
+      "-map", "[outv]",
+      "-map", "[outa]",
+      ...encodeArgs(perf),
+      "-c:a", "aac", "-b:a", perf.lowPerf ? "96k" : "128k",
+      ...threadArgs(perf),
+      "-movflags", "+faststart",
+      "-y", outputName,
+    ];
+    const sf = scaleFilter(perf);
+    if (sf) {
+      // Inject scale into each video trim by chaining after setpts
+      const scaled = parts.map((p) =>
+        p.startsWith("[0:v]trim") ? p.replace("setpts=PTS-STARTPTS", `setpts=PTS-STARTPTS,${sf}`) : p,
+      );
+      args[args.indexOf("-filter_complex") + 1] = scaled.join(";");
+    }
+    await ffmpeg.exec(args);
+    const data = await ffmpeg.readFile(outputName);
+    return data as Uint8Array;
+  } finally {
+    off();
+    try { await ffmpeg.deleteFile(inputName); } catch {}
+    try { await ffmpeg.deleteFile(outputName); } catch {}
+  }
+}
+
+
+
+
 export async function extractAudioMp3(
   file: File | Blob,
   onP?: ProgressCb,

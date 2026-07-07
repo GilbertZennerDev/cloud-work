@@ -20,7 +20,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 
 import { parseTimeToSeconds, formatSeconds } from "@/lib/subtitles/parseTime";
-import { cutVideo, extractAudioMp3, burnSubtitles } from "@/lib/ffmpeg/operations";
+import { cutAndConcat, extractAudioMp3, burnSubtitles } from "@/lib/ffmpeg/operations";
 import { onFfmpegLog, cancelFFmpeg } from "@/lib/ffmpeg/client";
 import { luxasrJsonToCues, cuesToSrt, type SrtCue } from "@/lib/subtitles/luxasrToSrt";
 import { shortenCues } from "@/lib/subtitles/shortenSrt";
@@ -132,8 +132,21 @@ function Dashboard() {
   }, [search.recording, loadingRecording, navigate]);
 
 
-  const [start, setStart] = useState("00:00");
-  const [end, setEnd] = useState("00:30");
+  const [segments, setSegments] = useState<Array<{ start: string; end: string }>>([
+    { start: "00:00", end: "00:30" },
+  ]);
+  const [activeSeg, setActiveSeg] = useState(0);
+
+  const updateSeg = (i: number, patch: Partial<{ start: string; end: string }>) =>
+    setSegments((s) => s.map((seg, idx) => (idx === i ? { ...seg, ...patch } : seg)));
+  const addSeg = () => {
+    setSegments((s) => [...s, { start: "00:00", end: "00:30" }]);
+    setActiveSeg(segments.length);
+  };
+  const removeSeg = (i: number) => {
+    setSegments((s) => (s.length <= 1 ? s : s.filter((_, idx) => idx !== i)));
+    setActiveSeg((a) => Math.max(0, Math.min(a, segments.length - 2)));
+  };
   const [mode, setMode] = useState<Mode>("full");
   const [fontSize, setFontSize] = useState(28);
   const [maxSentences, setMaxSentences] = useState(2);
@@ -171,14 +184,20 @@ function Dashboard() {
 
   const durationInfo = useMemo(() => {
     try {
-      const s = parseTimeToSeconds(start);
-      const e = parseTimeToSeconds(end);
-      if (e <= s) return { ok: false as const, msg: "End must be after start" };
-      return { ok: true as const, seconds: e - s, label: formatSeconds(e - s) };
+      let total = 0;
+      const parsed: Array<{ start: number; end: number }> = [];
+      for (let i = 0; i < segments.length; i++) {
+        const s = parseTimeToSeconds(segments[i].start);
+        const e = parseTimeToSeconds(segments[i].end);
+        if (e <= s) return { ok: false as const, msg: `Segment ${i + 1}: end must be after start` };
+        total += e - s;
+        parsed.push({ start: s, end: e });
+      }
+      return { ok: true as const, seconds: total, label: formatSeconds(total), parsed };
     } catch (err) {
       return { ok: false as const, msg: (err as Error).message };
     }
-  }, [start, end]);
+  }, [segments]);
 
   const isRunning = stage === "cutting" || stage === "extracting" ||
     stage === "asr" || stage === "srt" || stage === "shortening" || stage === "burning";
@@ -213,15 +232,14 @@ function Dashboard() {
       if (mode !== "subs-only") {
         setStage("cutting");
         if (!durationInfo.ok) throw new Error(durationInfo.msg);
-        const s = parseTimeToSeconds(start);
-        const e = parseTimeToSeconds(end);
-        const cut = await cutVideo(file, s, e, setProgress, { lowPerf, maxHeight });
+        const cut = await cutAndConcat(file, durationInfo.parsed, setProgress, { lowPerf, maxHeight });
         checkCancel();
         const clip = new Blob([cut as BlobPart], { type: "video/mp4" });
         setClipBlob(clip);
         workingVideo = clip;
         setProgress(1);
       }
+
 
       if (mode === "cut-only") {
         setStage("done");
@@ -440,12 +458,14 @@ function Dashboard() {
   };
 
   const setStartFromSeconds = (t: number) => {
-    setStart(formatSeconds(t));
-    setTimeout(() => seekTo(startVideoRef, formatSeconds(t)), 50);
+    const v = formatSeconds(t);
+    updateSeg(activeSeg, { start: v });
+    setTimeout(() => seekTo(startVideoRef, v), 50);
   };
   const setEndFromSeconds = (t: number) => {
-    setEnd(formatSeconds(t));
-    setTimeout(() => seekTo(endVideoRef, formatSeconds(t)), 50);
+    const v = formatSeconds(t);
+    updateSeg(activeSeg, { end: v });
+    setTimeout(() => seekTo(endVideoRef, v), 50);
   };
 
   const canRun = !!file && !isRunning;
@@ -492,6 +512,16 @@ function Dashboard() {
       }
     } catch { /* ignore */ }
   };
+
+  // Reseek previews when the active segment changes.
+  useEffect(() => {
+    if (!sourcePreviewUrl) return;
+    seekTo(startVideoRef, segments[activeSeg].start);
+    seekTo(endVideoRef, segments[activeSeg].end);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSeg, sourcePreviewUrl]);
+
+
 
   return (
 
@@ -663,65 +693,126 @@ function Dashboard() {
               </Tabs>
 
               {mode !== "subs-only" && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label htmlFor="start">Start</Label>
-                    <Input
-                      id="start" value={start}
-                      onChange={(e) => setStart(e.target.value)}
-                      placeholder="MM:SS or HH:MM:SS"
-                    />
-                    {sourcePreviewUrl && (
-                      <div className="space-y-1">
-                        <video
-                          ref={startVideoRef}
-                          src={sourcePreviewUrl}
-                          className="w-full rounded-md border bg-black aspect-video"
-                          controls
-                          muted
-                          preload="metadata"
-                          onLoadedMetadata={() => seekTo(startVideoRef, start)}
-                        />
+                <div className="space-y-3">
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {segments.map((_, i) => (
+                      <div key={i} className="flex items-center">
                         <Button
-                          type="button" size="sm" variant="outline" className="w-full h-7 text-xs"
-                          onClick={() => seekTo(startVideoRef, start)}
+                          type="button"
+                          size="sm"
+                          variant={i === activeSeg ? "default" : "outline"}
+                          className="h-7 rounded-r-none"
+                          onClick={() => setActiveSeg(i)}
                         >
-                          <Play className="h-3 w-3 mr-1" /> Preview start
+                          Segment {i + 1}
                         </Button>
+                        {segments.length > 1 && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={i === activeSeg ? "default" : "outline"}
+                            className="h-7 rounded-l-none border-l-0 px-2"
+                            onClick={() => removeSeg(i)}
+                            title="Remove segment"
+                          >
+                            <X className="h-3 w-3" />
+                          </Button>
+                        )}
                       </div>
-                    )}
+                    ))}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7"
+                      onClick={addSeg}
+                    >
+                      + Add segment
+                    </Button>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="end">End</Label>
-                    <Input
-                      id="end" value={end}
-                      onChange={(e) => setEnd(e.target.value)}
-                      placeholder="MM:SS or HH:MM:SS"
-                    />
-                    {sourcePreviewUrl && (
-                      <div className="space-y-1">
-                        <video
-                          ref={endVideoRef}
-                          src={sourcePreviewUrl}
-                          className="w-full rounded-md border bg-black aspect-video"
-                          controls
-                          muted
-                          preload="metadata"
-                          onLoadedMetadata={() => seekTo(endVideoRef, end)}
-                        />
-                        <Button
-                          type="button" size="sm" variant="outline" className="w-full h-7 text-xs"
-                          onClick={() => seekTo(endVideoRef, end)}
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="start">Start</Label>
+                      <Input
+                        id="start"
+                        value={segments[activeSeg].start}
+                        onChange={(e) => updateSeg(activeSeg, { start: e.target.value })}
+                        placeholder="MM:SS or HH:MM:SS"
+                      />
+                      {sourcePreviewUrl && (
+                        <div className="space-y-1">
+                          <video
+                            ref={startVideoRef}
+                            src={sourcePreviewUrl}
+                            className="w-full rounded-md border bg-black aspect-video"
+                            controls
+                            muted
+                            preload="metadata"
+                            onLoadedMetadata={() => seekTo(startVideoRef, segments[activeSeg].start)}
+                          />
+                          <Button
+                            type="button" size="sm" variant="outline" className="w-full h-7 text-xs"
+                            onClick={() => seekTo(startVideoRef, segments[activeSeg].start)}
+                          >
+                            <Play className="h-3 w-3 mr-1" /> Preview start
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="end">End</Label>
+                      <Input
+                        id="end"
+                        value={segments[activeSeg].end}
+                        onChange={(e) => updateSeg(activeSeg, { end: e.target.value })}
+                        placeholder="MM:SS or HH:MM:SS"
+                      />
+                      {sourcePreviewUrl && (
+                        <div className="space-y-1">
+                          <video
+                            ref={endVideoRef}
+                            src={sourcePreviewUrl}
+                            className="w-full rounded-md border bg-black aspect-video"
+                            controls
+                            muted
+                            preload="metadata"
+                            onLoadedMetadata={() => seekTo(endVideoRef, segments[activeSeg].end)}
+                          />
+                          <Button
+                            type="button" size="sm" variant="outline" className="w-full h-7 text-xs"
+                            onClick={() => seekTo(endVideoRef, segments[activeSeg].end)}
+                          >
+                            <Play className="h-3 w-3 mr-1" /> Preview end
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {segments.length > 1 && (
+                    <ul className="text-xs font-mono border rounded-md divide-y">
+                      {segments.map((s, i) => (
+                        <li
+                          key={i}
+                          className={
+                            "px-2 py-1 flex justify-between cursor-pointer " +
+                            (i === activeSeg ? "bg-muted" : "hover:bg-muted/40")
+                          }
+                          onClick={() => setActiveSeg(i)}
                         >
-                          <Play className="h-3 w-3 mr-1" /> Preview end
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                  <div className="col-span-2 text-xs">
+                          <span>#{i + 1}</span>
+                          <span>{s.start} → {s.end}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  <div className="text-xs">
                     {durationInfo.ok ? (
                       <span className="text-muted-foreground">
-                        Duration: <span className="font-mono">{durationInfo.label}</span>
+                        Total duration ({segments.length} segment{segments.length === 1 ? "" : "s"}):{" "}
+                        <span className="font-mono">{durationInfo.label}</span>
                       </span>
                     ) : (
                       <span className="text-destructive">{durationInfo.msg}</span>
@@ -729,6 +820,7 @@ function Dashboard() {
                   </div>
                 </div>
               )}
+
 
               {mode !== "cut-only" && (
                 <div className="space-y-4 pt-1">
