@@ -102,6 +102,7 @@ function Dashboard() {
   const search = useSearch({ from: "/" });
   const navigate = useNavigate();
   const [file, setFile] = useState<File | null>(null);
+  const [sourceTitle, setSourceTitle] = useState<string | null>(null);
   const [loadingRecording, setLoadingRecording] = useState<string | null>(null);
 
   // If ?recording=<id> is present, fetch it and load into the pipeline.
@@ -112,13 +113,14 @@ function Dashboard() {
     (async () => {
       try {
         toast.message("Loading recording…");
-        const { url, path } = await getRecordingDownloadUrl({ data: { id } });
+        const { url, path, title } = await getRecordingDownloadUrl({ data: { id } });
         const res = await fetch(url);
         if (!res.ok) throw new Error(`Download failed: ${res.status}`);
         const blob = await res.blob();
         const name = path.split("/").pop() ?? "recording.ts";
         const f = new File([blob], name, { type: "video/mp2t" });
         setFile(f);
+        setSourceTitle(title ?? name);
         toast.success(`Loaded ${(f.size / 1024 / 1024).toFixed(1)} MB`);
       } catch (err) {
         toast.error((err as Error).message);
@@ -128,6 +130,7 @@ function Dashboard() {
       }
     })();
   }, [search.recording, loadingRecording, navigate]);
+
 
   const [start, setStart] = useState("00:00");
   const [end, setEnd] = useState("00:30");
@@ -365,7 +368,34 @@ function Dashboard() {
     [subbedBlob],
   );
 
+  const sourcePreviewUrl = useMemo(
+    () => (file ? URL.createObjectURL(file) : null),
+    [file],
+  );
+  useEffect(() => {
+    return () => {
+      if (sourcePreviewUrl) URL.revokeObjectURL(sourcePreviewUrl);
+    };
+  }, [sourcePreviewUrl]);
+
+  const startVideoRef = useRef<HTMLVideoElement>(null);
+  const endVideoRef = useRef<HTMLVideoElement>(null);
+  const seekTo = (ref: React.RefObject<HTMLVideoElement | null>, timeStr: string) => {
+    const v = ref.current;
+    if (!v) return;
+    try {
+      const t = parseTimeToSeconds(timeStr);
+      if (isFinite(t) && t >= 0) {
+        v.currentTime = Math.min(t, v.duration || t);
+        v.play().catch(() => {});
+      }
+    } catch { /* ignore */ }
+  };
+
   return (
+
+
+
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b">
         <div className="mx-auto max-w-7xl px-6 py-4 flex items-center justify-between">
@@ -414,8 +444,8 @@ function Dashboard() {
                 className="flex flex-col items-center justify-center border-2 border-dashed rounded-lg py-8 cursor-pointer hover:bg-muted/40 transition-colors"
               >
                 <Upload className="h-6 w-6 mb-2 text-muted-foreground" />
-                <p className="text-sm">
-                  {file ? file.name : "Click or drop a video file"}
+                <p className="text-sm text-center px-4 break-all">
+                  {file ? (sourceTitle ?? file.name) : "Click or drop a video file"}
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
                   MP4 / MKV / MOV / TS · recommended ≤ 500 MB
@@ -427,13 +457,19 @@ function Dashboard() {
                   className="hidden"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
-                    if (f) setFile(f);
+                    if (f) {
+                      setFile(f);
+                      setSourceTitle(null);
+                    }
                   }}
                 />
               </label>
               {file && (
                 <p className="text-xs text-muted-foreground mt-2">
                   {(file.size / (1024 * 1024)).toFixed(1)} MB · {file.type || "unknown"}
+                  {sourceTitle && sourceTitle !== file.name && (
+                    <span className="ml-2 font-mono opacity-60">{file.name}</span>
+                  )}
                 </p>
               )}
             </CardContent>
@@ -463,21 +499,59 @@ function Dashboard() {
 
               {mode !== "subs-only" && (
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
+                  <div className="space-y-2">
                     <Label htmlFor="start">Start</Label>
                     <Input
                       id="start" value={start}
                       onChange={(e) => setStart(e.target.value)}
                       placeholder="MM:SS or HH:MM:SS"
                     />
+                    {sourcePreviewUrl && (
+                      <div className="space-y-1">
+                        <video
+                          ref={startVideoRef}
+                          src={sourcePreviewUrl}
+                          className="w-full rounded-md border bg-black aspect-video"
+                          controls
+                          muted
+                          preload="metadata"
+                          onLoadedMetadata={() => seekTo(startVideoRef, start)}
+                        />
+                        <Button
+                          type="button" size="sm" variant="outline" className="w-full h-7 text-xs"
+                          onClick={() => seekTo(startVideoRef, start)}
+                        >
+                          <Play className="h-3 w-3 mr-1" /> Preview start
+                        </Button>
+                      </div>
+                    )}
                   </div>
-                  <div>
+                  <div className="space-y-2">
                     <Label htmlFor="end">End</Label>
                     <Input
                       id="end" value={end}
                       onChange={(e) => setEnd(e.target.value)}
                       placeholder="MM:SS or HH:MM:SS"
                     />
+                    {sourcePreviewUrl && (
+                      <div className="space-y-1">
+                        <video
+                          ref={endVideoRef}
+                          src={sourcePreviewUrl}
+                          className="w-full rounded-md border bg-black aspect-video"
+                          controls
+                          muted
+                          preload="metadata"
+                          onLoadedMetadata={() => seekTo(endVideoRef, end)}
+                        />
+                        <Button
+                          type="button" size="sm" variant="outline" className="w-full h-7 text-xs"
+                          onClick={() => seekTo(endVideoRef, end)}
+                        >
+                          <Play className="h-3 w-3 mr-1" /> Preview end
+                        </Button>
+                      </div>
+                    )}
                   </div>
                   <div className="col-span-2 text-xs">
                     {durationInfo.ok ? (
