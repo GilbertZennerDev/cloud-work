@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as StudioRouteImport } from './routes/studio'
 import { Route as RecordingsRouteImport } from './routes/recordings'
 import { Route as PremiereRouteImport } from './routes/premiere'
+import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiHlsProxyRouteImport } from './routes/api/hls-proxy'
 import { Route as ApiAsrRouteImport } from './routes/api/asr'
@@ -30,6 +31,11 @@ const RecordingsRoute = RecordingsRouteImport.update({
 const PremiereRoute = PremiereRouteImport.update({
   id: '/premiere',
   path: '/premiere',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminRoute = AdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -56,6 +62,7 @@ const ApiPublicHooksCleanupRecordingsRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
   '/premiere': typeof PremiereRoute
   '/recordings': typeof RecordingsRoute
   '/studio': typeof StudioRoute
@@ -65,6 +72,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
   '/premiere': typeof PremiereRoute
   '/recordings': typeof RecordingsRoute
   '/studio': typeof StudioRoute
@@ -75,6 +83,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
   '/premiere': typeof PremiereRoute
   '/recordings': typeof RecordingsRoute
   '/studio': typeof StudioRoute
@@ -86,6 +95,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/admin'
     | '/premiere'
     | '/recordings'
     | '/studio'
@@ -95,6 +105,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/admin'
     | '/premiere'
     | '/recordings'
     | '/studio'
@@ -104,6 +115,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/admin'
     | '/premiere'
     | '/recordings'
     | '/studio'
@@ -114,6 +126,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdminRoute: typeof AdminRoute
   PremiereRoute: typeof PremiereRoute
   RecordingsRoute: typeof RecordingsRoute
   StudioRoute: typeof StudioRoute
@@ -143,6 +156,13 @@ declare module '@tanstack/react-router' {
       path: '/premiere'
       fullPath: '/premiere'
       preLoaderRoute: typeof PremiereRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -178,6 +198,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdminRoute: AdminRoute,
   PremiereRoute: PremiereRoute,
   RecordingsRoute: RecordingsRoute,
   StudioRoute: StudioRoute,
