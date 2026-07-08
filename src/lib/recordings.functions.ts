@@ -191,15 +191,14 @@ export const deleteRecording = createServerFn({ method: "POST" })
       .from("recordings")
       .select("storage_path")
       .eq("id", data.id)
-      .eq("user_id", context.userId)
       .single();
     if (error) throw new Error(error.message);
     await context.supabase.storage.from(RECORDINGS_BUCKET).remove([row.storage_path]);
     const { error: dErr } = await context.supabase
       .from("recordings")
       .delete()
-      .eq("id", data.id)
-      .eq("user_id", context.userId);
+      .eq("id", data.id);
+
     if (dErr) throw new Error(dErr.message);
     return { ok: true };
   });
