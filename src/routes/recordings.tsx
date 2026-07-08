@@ -58,30 +58,38 @@ function RecordingsPage() {
       const a = document.createElement("a");
       a.href = url;
       a.download = r.storage_path.split("/").pop() ?? "recording.ts";
+      // Signed URLs are cross-origin; some browsers ignore `download` there
+      // and open in-tab. Force a new tab so at minimum something happens.
+      a.rel = "noopener";
+      a.target = "_blank";
+      document.body.appendChild(a);
       a.click();
+      a.remove();
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
   const openInCutter = (r: RecordingRow) => {
-    navigate({ to: "/", search: { recording: r.id } as never });
+    navigate({ to: "/", search: { recording: r.id } });
   };
 
-  const [preview, setPreview] = useState<{ url: string; title: string; remuxing?: boolean } | null>(null);
+  const [preview, setPreview] = useState<{ url: string; title: string; remuxing?: boolean; error?: string } | null>(null);
   const [transcriptFor, setTranscriptFor] = useState<{ id: string; title: string } | null>(null);
 
   const previewMut = useMutation({
     mutationFn: async (r: RecordingRow) => {
-      const { url } = await getRecordingDownloadUrl({ data: { id: r.id } });
       const name = r.storage_path.split("/").pop() ?? "Recording";
       const title = r.title ?? name;
+      // Open the dialog immediately so the user gets instant feedback
+      // instead of waiting silently on the signed-URL round-trip + remux.
+      setPreview({ url: "", title, remuxing: true });
+      const { url } = await getRecordingDownloadUrl({ data: { id: r.id } });
       const isTs = /\.ts$/i.test(r.storage_path);
       if (!isTs) {
         setPreview({ url, title });
         return;
       }
       // Browsers can't play raw MPEG-TS via <video>. Remux to MP4 client-side.
-      setPreview({ url: "", title, remuxing: true });
       try {
         const res = await fetch(url);
         if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
@@ -91,7 +99,10 @@ function RecordingsPage() {
         const mp4Url = URL.createObjectURL(new Blob([mp4 as BlobPart], { type: "video/mp4" }));
         setPreview({ url: mp4Url, title });
       } catch (err) {
-        setPreview(null);
+        // Fall back to the raw signed URL — Safari can play TS natively;
+        // other browsers will show an unplayable-media error, both better
+        // than a silent infinite spinner.
+        setPreview({ url, title, error: (err as Error).message });
         throw err;
       }
     },
@@ -367,8 +378,13 @@ function RecordingsPage() {
           {preview?.remuxing && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground py-8 justify-center">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Remuxing .ts to MP4 for preview…
+              Preparing preview… (fetching + remuxing .ts to MP4)
             </div>
+          )}
+          {preview?.error && (
+            <p className="text-xs text-destructive px-1">
+              Remux failed: {preview.error}. Trying raw stream — your browser may not support MPEG-TS.
+            </p>
           )}
           {preview && preview.url && !preview.remuxing && (
             <video
