@@ -177,8 +177,8 @@ export const saveRecordingTranscript = createServerFn({ method: "POST" })
         transcript_srt: data.srt,
         transcribed_at: new Date().toISOString(),
       })
-      .eq("id", data.id)
-      .eq("user_id", context.userId);
+      .eq("id", data.id);
+
     if (error) throw new Error(error.message);
     return { ok: true };
   });
