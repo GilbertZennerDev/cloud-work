@@ -4,6 +4,8 @@ export interface RecorderStatus {
   segments: number;
   bytes: number;
   elapsedMs: number;
+  audioSegments?: number;
+  audioBytes?: number;
   lastError?: string;
 }
 
@@ -49,43 +51,39 @@ function concatBlob(parts: Uint8Array[], type: string): Blob {
 /**
  * Mux a video-only MPEG-TS blob with an audio blob (usually AAC-ADTS or an
  * audio-only MPEG-TS) into a single MPEG-TS blob using ffmpeg.wasm.
- * Falls back to the video-only blob if muxing fails.
  */
 async function muxAvIntoTs(
   videoBlob: Blob,
   audioBlob: Blob,
-  logFail: (m: string) => void,
 ): Promise<Blob> {
+  const { getFFmpeg } = await import("../ffmpeg/client");
+  const { fetchFile } = await import("@ffmpeg/util");
+  const ffmpeg = await getFFmpeg();
+  const token = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const vName = `mux_v_${token}.ts`;
+  const aName = `mux_a_${token}.bin`;
+  const oName = `mux_o_${token}.ts`;
+  await ffmpeg.writeFile(vName, await fetchFile(videoBlob));
+  await ffmpeg.writeFile(aName, await fetchFile(audioBlob));
   try {
-    const { getFFmpeg } = await import("../ffmpeg/client");
-    const { fetchFile } = await import("@ffmpeg/util");
-    const ffmpeg = await getFFmpeg();
-    const vName = `mux_v_${Date.now()}.ts`;
-    const aName = `mux_a_${Date.now()}.bin`;
-    const oName = `mux_o_${Date.now()}.ts`;
-    await ffmpeg.writeFile(vName, await fetchFile(videoBlob));
-    await ffmpeg.writeFile(aName, await fetchFile(audioBlob));
-    try {
-      await ffmpeg.exec([
-        "-fflags", "+genpts",
-        "-i", vName,
-        "-i", aName,
-        "-map", "0:v:0",
-        "-map", "1:a:0",
-        "-c", "copy",
-        "-f", "mpegts",
-        "-y", oName,
-      ]);
-      const data = (await ffmpeg.readFile(oName)) as Uint8Array;
-      return new Blob([data as BlobPart], { type: "video/mp2t" });
-    } finally {
-      try { await ffmpeg.deleteFile(vName); } catch {}
-      try { await ffmpeg.deleteFile(aName); } catch {}
-      try { await ffmpeg.deleteFile(oName); } catch {}
-    }
+    await ffmpeg.exec([
+      "-fflags", "+genpts",
+      "-i", vName,
+      "-i", aName,
+      "-map", "0:v:0",
+      "-map", "1:a:0",
+      "-c", "copy",
+      "-f", "mpegts",
+      "-y", oName,
+    ]);
+    const data = (await ffmpeg.readFile(oName)) as Uint8Array;
+    return new Blob([data as BlobPart], { type: "video/mp2t" });
   } catch (err) {
-    logFail(`mux failed: ${(err as Error).message}`);
-    return videoBlob;
+    throw new Error(`audio mux failed: ${(err as Error).message}`);
+  } finally {
+    try { await ffmpeg.deleteFile(vName); } catch {}
+    try { await ffmpeg.deleteFile(aName); } catch {}
+    try { await ffmpeg.deleteFile(oName); } catch {}
   }
 }
 
@@ -98,6 +96,8 @@ export async function startRecording(playlistUrl: string): Promise<RecorderHandl
   const ac = new AbortController();
   let stopped = false;
   let bytes = 0;
+  let audioBytes = 0;
+  let audioRequired = false;
   let statusCb: ((s: RecorderStatus) => void) | null = null;
   let logCb: ((msg: string) => void) | null = null;
   let lastError: string | undefined;
@@ -107,6 +107,8 @@ export async function startRecording(playlistUrl: string): Promise<RecorderHandl
     segments: videoChunks.length,
     bytes,
     elapsedMs: Date.now() - startedAt,
+    audioSegments: audioChunks.length,
+    audioBytes,
     lastError,
   });
 
@@ -122,13 +124,14 @@ export async function startRecording(playlistUrl: string): Promise<RecorderHandl
     mediaUrl = chosen.url;
     log(`[HLS] Variant selected: ${chosen.resolution ?? "?"} @ ${(chosen.bandwidth / 1000).toFixed(0)} kbps`);
     if (chosen.audioGroup) {
+      audioRequired = true;
       const audios = parseAudioMedia(firstText, playlistUrl);
       const match =
         audios.find((a) => a.groupId === chosen.audioGroup && a.isDefault && a.url) ??
         audios.find((a) => a.groupId === chosen.audioGroup && a.url);
       if (match?.url) {
         audioUrl = match.url;
-        log(`[HLS] Separate audio group "${chosen.audioGroup}" (${match.name}) detected — recording in parallel`);
+        log(`[HLS] Separate audio group "${chosen.audioGroup}" (${match.name}) detected — recording in parallel: ${audioUrl}`);
       } else {
         log(`[HLS] Audio group "${chosen.audioGroup}" declared but no URI found — recording video only`);
       }
@@ -159,8 +162,10 @@ export async function startRecording(playlistUrl: string): Promise<RecorderHandl
             sink.push(bytesArr);
             if (countBytes) {
               bytes += bytesArr.byteLength;
-              emit();
+            } else {
+              audioBytes += bytesArr.byteLength;
             }
+            emit();
           } catch (err) {
             if (stopped) break;
             lastError = (err as Error).message;
@@ -197,14 +202,20 @@ export async function startRecording(playlistUrl: string): Promise<RecorderHandl
   const buildBlobFrom = async (startIdx: number): Promise<Blob> => {
     const vSlice = videoChunks.slice(startIdx);
     const video = concatBlob(vSlice, "video/mp2t");
-    if (!audioUrl || audioChunks.length === 0) return video;
+    if (video.size === 0) throw new Error("no video segments were captured");
+    if (!audioRequired) return video;
+    if (!audioUrl) throw new Error("audio expected but no audio rendition URI was available");
+    if (audioChunks.length === 0) throw new Error("audio expected but no audio segments were captured");
     // Take the same proportional slice of the audio buffer. Audio and video
     // segments are usually aligned 1:1 in HLS; if they drift, ffmpeg will
     // realign timestamps at mux time.
     const aSlice = audioChunks.slice(Math.min(startIdx, audioChunks.length));
+    if (aSlice.length === 0) throw new Error("audio expected but audio slice was empty");
     const isAac = /\.aac(\?|$)/i.test(audioUrl);
     const audio = concatBlob(aSlice, isAac ? "audio/aac" : "video/mp2t");
-    return muxAvIntoTs(video, audio, (m) => log(`[HLS] ${m}`));
+    const muxed = await muxAvIntoTs(video, audio);
+    log(`[HLS] Muxed ${vSlice.length} video segments with ${aSlice.length} audio segments`);
+    return muxed;
   };
 
   return {

@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import type { Json } from "@/integrations/supabase/types";
 
 const RECORDINGS_BUCKET = "recordings";
 const DOWNLOAD_EXPIRES_SEC = 60 * 60; // 1h
@@ -21,11 +22,15 @@ const MarkReadyInput = z.object({
   id: z.string().uuid(),
   endedAt: z.string(),
   sizeBytes: z.number().int().nonnegative(),
+  audioStatus: z.string().max(40).nullable().optional(),
+  audioDetails: z.record(z.any()).nullable().optional(),
 });
 
 const MarkFailedInput = z.object({
   id: z.string().uuid(),
   error: z.string().max(500),
+  audioStatus: z.string().max(40).nullable().optional(),
+  audioDetails: z.record(z.any()).nullable().optional(),
 });
 
 const IdInput = z.object({ id: z.string().uuid() });
@@ -88,6 +93,8 @@ export const markRecordingReady = createServerFn({ method: "POST" })
         status: "ready",
         ended_at: data.endedAt,
         size_bytes: data.sizeBytes,
+        audio_status: data.audioStatus ?? null,
+        audio_details: (data.audioDetails ?? null) as Json | null,
       })
       .eq("id", data.id)
       .eq("user_id", context.userId);
@@ -101,7 +108,12 @@ export const markRecordingFailed = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     await context.supabase
       .from("recordings")
-      .update({ status: "failed", error: data.error })
+      .update({
+        status: "failed",
+        error: data.error,
+        audio_status: data.audioStatus ?? "failed",
+        audio_details: (data.audioDetails ?? null) as Json | null,
+      })
       .eq("id", data.id)
       .eq("user_id", context.userId);
     return { ok: true };
@@ -124,6 +136,8 @@ export interface RecordingRow {
   transcript_srt: string | null;
   transcribed_at: string | null;
   full_copy: boolean;
+  audio_status: string | null;
+  audio_details: Json | null;
 }
 
 export const listRecordings = createServerFn({ method: "GET" })
