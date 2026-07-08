@@ -75,6 +75,7 @@ export async function generateThumbnailFromBlob(blob: Blob): Promise<string | nu
     setTimeout(() => finish(null), 15000);
   });
 }
+let active = 0;
 const MAX_CONCURRENT = 2;
 const queue: Array<() => void> = [];
 function acquire(): Promise<void> {
