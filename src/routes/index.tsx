@@ -792,7 +792,7 @@ function Dashboard() {
       toast.success(`${shortened.length} subtitle blocks — click a block to set start/end`);
     } catch (err) {
       const rawMessage = err instanceof Error ? err.message : String(err);
-      const message = friendlyPipelineError(rawMessage, stage);
+      const message = friendlyPipelineError(rawMessage, activeStage);
       if (cancelledRef.current || message === "Cancelled" || (err as Error)?.name === "AbortError") {
         appendLog("[CANCEL] Transcription stopped");
         setStage("idle");
