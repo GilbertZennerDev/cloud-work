@@ -7,6 +7,7 @@ const CORS = {
 } as const;
 
 const RETENTION_DAYS = 30;
+const STUCK_UPLOAD_MINUTES = 30;
 
 export const Route = createFileRoute("/api/public/hooks/cleanup-recordings")({
   server: {
