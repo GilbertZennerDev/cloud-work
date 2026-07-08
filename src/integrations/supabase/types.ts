@@ -72,6 +72,8 @@ export type Database = {
       }
       recordings: {
         Row: {
+          audio_details: Json | null
+          audio_status: string | null
           chunk_index: number
           created_at: string
           ended_at: string | null
@@ -92,6 +94,8 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          audio_details?: Json | null
+          audio_status?: string | null
           chunk_index?: number
           created_at?: string
           ended_at?: string | null
@@ -112,6 +116,8 @@ export type Database = {
           user_id: string
         }
         Update: {
+          audio_details?: Json | null
+          audio_status?: string | null
           chunk_index?: number
           created_at?: string
           ended_at?: string | null
