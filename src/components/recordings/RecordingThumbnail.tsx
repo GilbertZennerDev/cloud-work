@@ -163,17 +163,25 @@ export function RecordingThumbnail({ recordingId, storagePath, ready }: Props) {
     if (!ready || loading || src) return;
     if (/\.ts$/i.test(storagePath)) {
       setFailed(true);
+      toast.error("Thumbnails not supported for .ts files (browser can't decode MPEG-TS).");
       return;
     }
     setFailed(false);
     setLoading(true);
     let promise = inflight.get(recordingId);
     if (!promise) {
-      promise = generateThumb(recordingId, storagePath).then((url) => {
-        if (url) cache.set(recordingId, url);
-        inflight.delete(recordingId);
-        return url;
-      });
+      promise = generateThumb(recordingId, storagePath)
+        .then((url) => {
+          if (url) cache.set(recordingId, url);
+          inflight.delete(recordingId);
+          return url;
+        })
+        .catch((err: Error) => {
+          console.error("[thumbnail] generation failed", err);
+          toast.error(`Thumbnail failed: ${err.message}`);
+          inflight.delete(recordingId);
+          return null;
+        });
       inflight.set(recordingId, promise);
     }
     promise.then((url) => {
@@ -183,6 +191,7 @@ export function RecordingThumbnail({ recordingId, storagePath, ready }: Props) {
       else setFailed(true);
     });
   };
+
 
   const disabled = !ready || loading || !!src;
   const title = !ready
