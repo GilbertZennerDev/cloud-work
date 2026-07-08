@@ -84,7 +84,7 @@ export function shortenCues(
         : (gChars / totalChars) * dur;
       const start = cursor;
       const end = i === groups.length - 1 ? cue.end : Math.min(cue.end, cursor + share);
-      out.push({ index: idx++, start, end, text: joinWithBreaks(g) });
+      out.push({ index: idx++, start, end, text: joinWithBreaks(g, maxChars) });
       cursor = end;
     });
   }
