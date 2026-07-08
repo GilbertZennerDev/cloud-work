@@ -132,13 +132,13 @@ export const listRecordings = createServerFn({ method: "GET" })
     const { data, error } = await context.supabase
       .from("recordings")
       .select("*")
-      .eq("user_id", context.userId)
       .order("session_date", { ascending: false })
       .order("chunk_index", { ascending: true })
       .limit(500);
     if (error) throw new Error(error.message);
     return (data ?? []) as RecordingRow[];
   });
+
 
 export const getRecordingDownloadUrl = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -148,8 +148,8 @@ export const getRecordingDownloadUrl = createServerFn({ method: "POST" })
       .from("recordings")
       .select("storage_path, status, title, transcript, transcript_srt, transcribed_at")
       .eq("id", data.id)
-      .eq("user_id", context.userId)
       .single();
+
     if (error) throw new Error(error.message);
     if (row.status !== "ready") throw new Error(`Recording not ready (${row.status})`);
     const { data: signed, error: sErr } = await context.supabase.storage
@@ -177,8 +177,8 @@ export const saveRecordingTranscript = createServerFn({ method: "POST" })
         transcript_srt: data.srt,
         transcribed_at: new Date().toISOString(),
       })
-      .eq("id", data.id)
-      .eq("user_id", context.userId);
+      .eq("id", data.id);
+
     if (error) throw new Error(error.message);
     return { ok: true };
   });
@@ -191,15 +191,14 @@ export const deleteRecording = createServerFn({ method: "POST" })
       .from("recordings")
       .select("storage_path")
       .eq("id", data.id)
-      .eq("user_id", context.userId)
       .single();
     if (error) throw new Error(error.message);
     await context.supabase.storage.from(RECORDINGS_BUCKET).remove([row.storage_path]);
     const { error: dErr } = await context.supabase
       .from("recordings")
       .delete()
-      .eq("id", data.id)
-      .eq("user_id", context.userId);
+      .eq("id", data.id);
+
     if (dErr) throw new Error(dErr.message);
     return { ok: true };
   });
