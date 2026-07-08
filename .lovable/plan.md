@@ -1,21 +1,23 @@
-## Problem
+## Root cause
 
-Recordings uploaded by the worker are correctly stored with `group_id = ADR`, and the RLS policies already grant read/update/delete to any group member. But server functions in `src/lib/recordings.functions.ts` add an extra `.eq("user_id", context.userId)` filter on top of RLS, so each user only ever sees rows they personally uploaded. Worker rows (owned by `WORKER_USER_ID`) are invisible to ADR members even though RLS would allow them.
+`app_private.is_super_admin(_user_id)` still calls `public.has_role(...)`, but an earlier migration moved `has_role` to the `app_private` schema. Every RLS check on `recordings` runs `has_group_access` → `is_super_admin` → `public.has_role`, which no longer exists — hence the error for both users.
 
 ## Fix
 
-Drop the redundant `user_id` filters and let RLS scope visibility. Rows the caller shouldn't touch are already blocked by policy.
+One migration, redefine `is_super_admin` to call the moved function:
 
-Changes in `src/lib/recordings.functions.ts`:
+```sql
+CREATE OR REPLACE FUNCTION app_private.is_super_admin(_user_id uuid)
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT app_private.has_role(_user_id, 'super_admin'::public.app_role);
+$$;
+```
 
-1. `listRecordings` — remove `.eq("user_id", context.userId)`. Return everything RLS allows (own + all group recordings).
-2. `getRecordingDownloadUrl` — remove `.eq("user_id", context.userId)` so any ADR member can fetch a signed URL for a group recording.
-3. `saveRecordingTranscript` — remove `.eq("user_id", context.userId)` so group members can edit transcripts (RLS UPDATE policy already allows it).
-4. `deleteRecording` — remove both `.eq("user_id", context.userId)` calls (RLS DELETE policy already restricts to group members).
-5. `markRecordingReady` / `markRecordingFailed` — leave as-is; only the original uploader calls these from the browser recorder, and the worker uses the admin hook.
-
-Optional UX touch (only if you want it — say the word): show the worker recordings with a fallback title like `Session {session_date} · chunk {n}` in the Recordings page when `title` is null, instead of literal "null".
+No application code changes.
 
 ## Verification
 
-After the change, sign in as an ADR member and open Recordings — the 4 READY worker rows should appear and download.
+After the migration, sign in as either user and open Recordings — the 4 READY worker rows load without the "function public.has_role does not exist" error.
