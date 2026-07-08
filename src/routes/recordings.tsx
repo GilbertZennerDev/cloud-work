@@ -18,6 +18,7 @@ import {
   type RecordingRow,
 } from "@/lib/recordings.functions";
 import { TranscriptEditor } from "@/components/recordings/TranscriptEditor";
+import { RecordingThumbnail } from "@/components/recordings/RecordingThumbnail";
 
 
 
