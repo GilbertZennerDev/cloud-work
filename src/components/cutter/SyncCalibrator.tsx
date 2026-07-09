@@ -16,6 +16,7 @@ import { cutVideo } from "@/lib/ffmpeg/operations";
 import type { SrtCue } from "@/lib/subtitles/luxasrToSrt";
 import { formatSeconds } from "@/lib/subtitles/parseTime";
 import { detectLipSyncOffset } from "@/lib/lipsync/detectOffset";
+import type { TierProfile } from "@/lib/perf/detect";
 
 interface Props {
   open: boolean;
@@ -24,12 +25,13 @@ interface Props {
   getSource: () => Blob | null;
   offset: number;
   setOffset: (n: number) => void;
+  perf: TierProfile;
 }
 
 const PAD_BEFORE = 2;
 const PAD_AFTER = 3;
 
-export function SyncCalibrator({ open, onClose, cues, getSource, offset, setOffset }: Props) {
+export function SyncCalibrator({ open, onClose, cues, getSource, offset, setOffset, perf }: Props) {
   const [cueIdx, setCueIdx] = useState<number>(0);
   const [localOffset, setLocalOffset] = useState<number>(offset);
   const [busy, setBusy] = useState(false);
