@@ -82,10 +82,13 @@ function reencodeCutArgs(
     "-movflags", "+faststart",
     "-y", outputName,
   ];
+  const af = audioOffsetFilter(perf);
+  if (af) args.splice(args.indexOf("-c:a"), 0, "-af", af);
   const sf = scaleFilter(perf);
   if (sf) args.splice(args.indexOf("-c:v"), 0, "-vf", sf);
   return args;
 }
+
 
 function scaleFilter(perf: PerfOptions): string | null {
   const h = perf.maxHeight ?? (perf.lowPerf ? 480 : 0);
