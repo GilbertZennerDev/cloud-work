@@ -169,7 +169,7 @@ export async function cutVideo(
   const outputName = `cut_${token}.mp4`;
   await ffmpeg.writeFile(inputName, await fetchFile(file));
   const duration = (endSec - startSec).toFixed(3);
-  const mustReencode = !!(perf.lowPerf || perf.maxHeight);
+  const mustReencode = !!(perf.lowPerf || perf.maxHeight || (perf.audioOffsetSec && Math.abs(perf.audioOffsetSec) >= 0.001));
   try {
     if (mustReencode) throw new Error("reencode");
     // Fast copy: no CPU cost, ideal for weak hardware.
