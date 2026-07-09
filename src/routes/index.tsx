@@ -59,6 +59,7 @@ import {
   DEFAULT_STREAM_URL,
 } from "@/lib/hls/shared-recorder";
 import { SubtitlePreview } from "@/components/cutter/SubtitlePreview";
+import { SyncCalibrator } from "@/components/cutter/SyncCalibrator";
 
 const indexSearchSchema = z.object({
   recording: z.string().uuid().optional(),
