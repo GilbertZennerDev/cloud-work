@@ -77,7 +77,8 @@ export function SyncCalibrator({ open, onClose, cues, getSource, offset, setOffs
       const start = Math.max(0, cue.start - PAD_BEFORE);
       const end = cue.end + PAD_AFTER;
       const out = await cutVideo(src, start, end, undefined, {
-        lowPerf: true,
+        lowPerf: perf.lowPerf,
+        maxHeight: perf.maxHeight || undefined,
         audioOffsetSec: localOffset,
       });
       const blob = new Blob([out as BlobPart], { type: "video/mp4" });
@@ -114,11 +115,15 @@ export function SyncCalibrator({ open, onClose, cues, getSource, offset, setOffs
       const start = Math.max(0, cue.start - PAD_BEFORE);
       const end = cue.end + PAD_AFTER;
       const out = await cutVideo(src, start, end, undefined, {
-        lowPerf: true,
+        lowPerf: perf.lowPerf,
+        maxHeight: perf.maxHeight || undefined,
         audioOffsetSec: localOffset,
       });
       const blob = new Blob([out as BlobPart], { type: "video/mp4" });
       const result = await detectLipSyncOffset(blob, {
+        delegate: perf.lipsyncDelegate,
+        fps: perf.lipsyncFps,
+        maxLagSec: perf.lipsyncMaxLag,
         onProgress: (label, pct) => setAutoStatus(`${label} ${Math.round(pct * 100)}%`),
       });
       const next = Number((localOffset + result.offsetSec).toFixed(3));
