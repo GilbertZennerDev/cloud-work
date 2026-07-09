@@ -60,6 +60,9 @@ import {
 } from "@/lib/hls/shared-recorder";
 import { SubtitlePreview } from "@/components/cutter/SubtitlePreview";
 import { SyncCalibrator } from "@/components/cutter/SyncCalibrator";
+import { PerfSelector } from "@/components/cutter/PerfSelector";
+import { usePerfTier } from "@/lib/perf/usePerfTier";
+import { extractAudioMp3Fast } from "@/lib/webcodecs/audio";
 
 const indexSearchSchema = z.object({
   recording: z.string().uuid().optional(),
