@@ -95,6 +95,48 @@ export function SyncCalibrator({ open, onClose, cues, getSource, offset, setOffs
     }
   };
 
+  const autoDetect = async () => {
+    const src = getSource();
+    if (!src) {
+      toast.error("Source not ready. Wait for the preview to finish preparing.");
+      return;
+    }
+    if (!cue) {
+      toast.error("Pick a cue first.");
+      return;
+    }
+    setAutoBusy(true);
+    setAutoStatus("Preparing clip…");
+    try {
+      // Bake current offset into the analysis clip; the detector then finds the residual.
+      const start = Math.max(0, cue.start - PAD_BEFORE);
+      const end = cue.end + PAD_AFTER;
+      const out = await cutVideo(src, start, end, undefined, {
+        lowPerf: true,
+        audioOffsetSec: localOffset,
+      });
+      const blob = new Blob([out as BlobPart], { type: "video/mp4" });
+      const result = await detectLipSyncOffset(blob, {
+        onProgress: (label, pct) => setAutoStatus(`${label} ${Math.round(pct * 100)}%`),
+      });
+      const next = Number((localOffset + result.offsetSec).toFixed(3));
+      setLocalOffset(next);
+      // Also show a preview at the new offset for a manual sanity check.
+      const url = URL.createObjectURL(blob);
+      setPreviewUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return url; });
+      const conf = Math.round(result.confidence * 100);
+      const cov = Math.round(result.faceCoverage * 100);
+      toast.success(
+        `Detected residual ${result.offsetSec >= 0 ? "+" : ""}${result.offsetSec.toFixed(3)}s → offset ${next.toFixed(3)}s (confidence ${conf}%, face ${cov}%)`,
+      );
+    } catch (err) {
+      toast.error(`Auto-detect failed: ${(err as Error).message}`);
+    } finally {
+      setAutoBusy(false);
+      setAutoStatus("");
+    }
+  };
+
   const apply = () => {
     setOffset(Number(localOffset.toFixed(3)));
     toast.success(`Audio offset set to ${localOffset.toFixed(3)}s`);
