@@ -1,10 +1,14 @@
 import { FilesetResolver, FaceLandmarker, type NormalizedLandmark } from "@mediapipe/tasks-vision";
 
+export type LipsyncDelegate = "CPU" | "GPU";
+
 export interface DetectOptions {
   /** Sampling rate in frames per second. Default 15. */
   fps?: number;
   /** Maximum |lag| to search, in seconds. Default 1.0. */
   maxLagSec?: number;
+  /** MediaPipe compute delegate. GPU is 2–5× faster on machines with a real GPU. */
+  delegate?: LipsyncDelegate;
   onProgress?: (label: string, pct: number) => void;
 }
 
@@ -17,27 +21,50 @@ export interface DetectResult {
   faceCoverage: number;
   /** Number of frames sampled. */
   frames: number;
+  /** Delegate actually used (may differ from requested if GPU init failed). */
+  delegateUsed: LipsyncDelegate;
 }
 
-let landmarkerPromise: Promise<FaceLandmarker> | null = null;
+// Cache one landmarker per delegate — GPU init is expensive.
+const landmarkerCache = new Map<LipsyncDelegate, Promise<FaceLandmarker>>();
 
-function getLandmarker(): Promise<FaceLandmarker> {
-  if (!landmarkerPromise) {
-    landmarkerPromise = (async () => {
-      const fileset = await FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm",
-      );
-      return FaceLandmarker.createFromOptions(fileset, {
-        baseOptions: {
-          modelAssetPath:
-            "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-        },
-        runningMode: "VIDEO",
-        numFaces: 1,
+async function createLandmarker(delegate: LipsyncDelegate): Promise<FaceLandmarker> {
+  const fileset = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm",
+  );
+  return FaceLandmarker.createFromOptions(fileset, {
+    baseOptions: {
+      modelAssetPath:
+        "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+      delegate,
+    },
+    runningMode: "VIDEO",
+    numFaces: 1,
+  });
+}
+
+async function getLandmarker(delegate: LipsyncDelegate): Promise<{ landmarker: FaceLandmarker; used: LipsyncDelegate }> {
+  const tryGet = (d: LipsyncDelegate) => {
+    let p = landmarkerCache.get(d);
+    if (!p) {
+      p = createLandmarker(d).catch((err) => {
+        landmarkerCache.delete(d);
+        throw err;
       });
-    })();
+      landmarkerCache.set(d, p);
+    }
+    return p;
+  };
+  try {
+    return { landmarker: await tryGet(delegate), used: delegate };
+  } catch (err) {
+    if (delegate === "GPU") {
+      // eslint-disable-next-line no-console
+      console.warn("[lipsync] GPU delegate failed, falling back to CPU", err);
+      return { landmarker: await tryGet("CPU"), used: "CPU" };
+    }
+    throw err;
   }
-  return landmarkerPromise;
 }
 
 /** Vertical mouth aperture, normalised by face height. Returns NaN if unavailable. */
@@ -123,10 +150,11 @@ function fillNaNs(a: Float32Array): { filled: Float32Array; validCount: number }
 export async function detectLipSyncOffset(clip: Blob, opts: DetectOptions = {}): Promise<DetectResult> {
   const fps = opts.fps ?? 15;
   const maxLagSec = opts.maxLagSec ?? 1.0;
+  const delegate: LipsyncDelegate = opts.delegate ?? "CPU";
   const report = (label: string, pct: number) => opts.onProgress?.(label, Math.max(0, Math.min(1, pct)));
 
-  report("Loading face model…", 0);
-  const landmarker = await getLandmarker();
+  report(`Loading face model (${delegate})…`, 0);
+  const { landmarker, used: delegateUsed } = await getLandmarker(delegate);
 
   // Build a video element from the blob.
   const url = URL.createObjectURL(clip);
