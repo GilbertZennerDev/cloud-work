@@ -1634,6 +1634,20 @@ function Dashboard() {
                         </Button>
                       )}
                     </div>
+                    <div className="mt-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => setSyncOpen(true)}
+                        disabled={!file}
+                      >
+                        Calibrate with a transcript cue…
+                      </Button>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Generates a short preview around a chosen cue so you can nudge until video and audio line up.
+                      </p>
+                    </div>
                   </div>
 
                   <div>
