@@ -336,12 +336,23 @@ async function sampleMouthByPlayback(
   let nextIdx = 0;
   const toLandmarkerTime = createTimestampMapper(landmarker);
   const timeoutMs = Math.min(90_000, Math.max(15_000, duration * 2_500 + frameCount * 300));
+  // Watchdog: if rvfc never fires (Chromium throttles hidden/offscreen video),
+  // bail out fast so the seek fallback can run.
+  let framesSeen = 0;
+  const stallDeadline = window.setTimeout(() => {
+    if (framesSeen === 0) {
+      // eslint-disable-next-line no-console
+      console.warn("[lipsync] rvfc never fired within 2.5s — playback sampling stalled");
+      video.pause();
+    }
+  }, 2_500);
   try {
     await withTimeout(
       new Promise<void>((resolve) => {
         const step = (_now: number, metadata: { mediaTime?: number; presentationTime?: number }) => {
+          framesSeen++;
           const mediaTime = metadata.mediaTime ?? video.currentTime;
-          if (nextIdx >= frameCount || mediaTime >= duration || video.ended) {
+          if (nextIdx >= frameCount || mediaTime >= duration || video.ended || video.paused) {
             resolve();
             return;
           }
@@ -367,17 +378,16 @@ async function sampleMouthByPlayback(
       timeoutMs,
       "Timed out while analysing video frames",
     ).catch((err) => {
-      // Return the frames collected so far; downstream face-coverage checks
-      // decide whether this partial sample is useful. This prevents a late
-      // timeout from discarding otherwise valid analysis data and then trying
-      // to reuse the same VIDEO-mode landmarker with reset timestamps.
       // eslint-disable-next-line no-console
       console.warn("[lipsync] playback sampling ended early", err);
     });
   } finally {
+    window.clearTimeout(stallDeadline);
     video.pause();
   }
 
+  // If we captured no frames at all, signal caller to use the seek fallback.
+  if (nextIdx === 0) return null;
   return mouth;
 }
 
@@ -423,12 +433,17 @@ export async function detectLipSyncOffset(clip: Blob, opts: DetectOptions = {}):
   video.playsInline = true;
   video.preload = "auto";
   video.crossOrigin = "anonymous";
+  // Chromium throttles requestVideoFrameCallback for videos that are
+  // offscreen or fully transparent, which makes rvfc-based sampling stall
+  // indefinitely. Keep the element on-screen, small, and *slightly* opaque
+  // so the compositor considers it visible.
   video.style.position = "fixed";
-  video.style.left = "-9999px";
-  video.style.top = "0";
-  video.style.width = "1px";
-  video.style.height = "1px";
-  video.style.opacity = "0";
+  video.style.right = "0px";
+  video.style.bottom = "0px";
+  video.style.width = "4px";
+  video.style.height = "4px";
+  video.style.opacity = "0.01";
+  video.style.zIndex = "0";
   video.style.pointerEvents = "none";
   try {
     document.body.appendChild(video);
@@ -449,11 +464,21 @@ export async function detectLipSyncOffset(clip: Blob, opts: DetectOptions = {}):
       console.warn("[lipsync] playback sampling failed, falling back to seeking", err);
       return null;
     });
-    if (!mouth) {
+    // If playback stalled or only produced a handful of frames, redo with seeking.
+    const coverageMin = Math.max(8, Math.floor(frameCount * 0.5));
+    const gotEnough = (arr: Float32Array | null) => {
+      if (!arr) return false;
+      let filled = 0;
+      for (let i = 0; i < arr.length; i++) if (!Number.isNaN(arr[i])) filled++;
+      return filled >= coverageMin;
+    };
+    if (!gotEnough(mouth)) {
+      // eslint-disable-next-line no-console
+      console.info("[lipsync] using seek-based frame sampling");
       mouth = await sampleMouthBySeeking(video, landmarker, fps, duration, report);
     }
 
-    const { filled: mouthFilled, validCount } = fillNaNs(mouth);
+    const { filled: mouthFilled, validCount } = fillNaNs(mouth!);
     const faceCoverage = validCount / frameCount;
     if (validCount < Math.max(6, frameCount * 0.25)) {
       throw new Error(`No consistent face detected (${Math.round(faceCoverage * 100)}% of frames). Pick a cue with the presenter clearly on-screen.`);
