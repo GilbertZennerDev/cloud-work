@@ -541,7 +541,7 @@ function Dashboard() {
       if (mode !== "subs-only") {
         moveToStage("cutting");
         if (!durationInfo.ok) throw new Error(durationInfo.msg);
-        const cut = await cutAndConcat(sourceForCut, durationInfo.parsed, setProgress, { lowPerf, maxHeight });
+        const cut = await cutAndConcat(sourceForCut, durationInfo.parsed, setProgress, { lowPerf, maxHeight, audioOffsetSec });
         checkCancel();
         const clip = new Blob([cut as BlobPart], { type: "video/mp4" });
         setClipBlob(clip);
