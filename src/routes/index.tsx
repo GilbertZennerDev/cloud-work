@@ -410,6 +410,8 @@ function Dashboard() {
   const [burnIn, setBurnIn] = useState(true);
   const [lowPerf, setLowPerf] = useState(false);
   const [maxHeight, setMaxHeight] = useState<0 | 480 | 720 | 1080>(0);
+  const [audioOffsetSec, setAudioOffsetSec] = useState(0);
+
 
   const [stage, setStage] = useState<Stage>("idle");
   const [progress, setProgress] = useState(0);
