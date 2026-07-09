@@ -60,6 +60,9 @@ import {
 } from "@/lib/hls/shared-recorder";
 import { SubtitlePreview } from "@/components/cutter/SubtitlePreview";
 import { SyncCalibrator } from "@/components/cutter/SyncCalibrator";
+import { PerfSelector } from "@/components/cutter/PerfSelector";
+import { usePerfTier } from "@/lib/perf/usePerfTier";
+import { extractAudioMp3Fast } from "@/lib/webcodecs/audio";
 
 const indexSearchSchema = z.object({
   recording: z.string().uuid().optional(),
@@ -173,6 +176,30 @@ function formatDownloadBytes(bytes: number): string {
   const mb = bytes / 1024 / 1024;
   if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
   return `${mb.toFixed(1)} MB`;
+}
+
+/**
+ * Extract MP3 audio using the WebCodecs/Web Audio fast path when the perf
+ * tier allows it, and fall back to ffmpeg.wasm otherwise. The fast path is
+ * typically 3–10× quicker on modern machines but can't decode every
+ * container (e.g. raw MPEG-TS), hence the graceful fallback.
+ */
+async function extractAudioSmart(
+  source: Blob,
+  onProgress: (n: number) => void,
+  lowPerf: boolean,
+  useFast: boolean,
+  log: (m: string) => void,
+): Promise<Uint8Array> {
+  if (useFast) {
+    try {
+      log("[AUDIO] Fast path (WebCodecs + lamejs)…");
+      return await extractAudioMp3Fast(source, onProgress);
+    } catch (err) {
+      log(`[AUDIO] Fast path failed (${(err as Error).message}); falling back to ffmpeg.wasm`);
+    }
+  }
+  return await extractAudioMp3(source, onProgress, { lowPerf });
 }
 
 async function downloadRecordingFile(
@@ -414,6 +441,14 @@ function Dashboard() {
   const [audioOffsetSec, setAudioOffsetSec] = useState(0);
   const [syncOpen, setSyncOpen] = useState(false);
 
+  const perfState = usePerfTier();
+  const perf = perfState.profile;
+  // Effective ffmpeg options derived from the perf tier, but the manual
+  // Low-perf switch and manual max-height selector still take precedence
+  // when the user has explicitly set them.
+  const effLowPerf = lowPerf || perf.lowPerf;
+  const effMaxHeight: 0 | 480 | 720 | 1080 = maxHeight !== 0 ? maxHeight : perf.maxHeight;
+
 
   const [stage, setStage] = useState<Stage>("idle");
   const [progress, setProgress] = useState(0);
@@ -543,7 +578,7 @@ function Dashboard() {
       if (mode !== "subs-only") {
         moveToStage("cutting");
         if (!durationInfo.ok) throw new Error(durationInfo.msg);
-        const cut = await cutAndConcat(sourceForCut, durationInfo.parsed, setProgress, { lowPerf, maxHeight, audioOffsetSec });
+        const cut = await cutAndConcat(sourceForCut, durationInfo.parsed, setProgress, { lowPerf: effLowPerf, maxHeight: effMaxHeight, audioOffsetSec });
         checkCancel();
         const clip = new Blob([cut as BlobPart], { type: "video/mp4" });
         setClipBlob(clip);
@@ -562,7 +597,7 @@ function Dashboard() {
       setProgress(0);
       let audioBytes: Uint8Array;
       try {
-        audioBytes = await extractAudioMp3(workingVideo, setProgress, { lowPerf });
+        audioBytes = await extractAudioSmart(workingVideo, setProgress, effLowPerf, perf.webcodecsAudio, appendLog);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (message.includes("No usable audio track") || isFfmpegFilesystemError(message)) {
@@ -681,7 +716,7 @@ function Dashboard() {
           videoWidth: dims.width,
           videoHeight: dims.height,
         });
-        const subbed = await burnSubtitles(workingVideo, ass, setProgress, { lowPerf, maxHeight });
+        const subbed = await burnSubtitles(workingVideo, ass, setProgress, { lowPerf: effLowPerf, maxHeight: effMaxHeight });
         checkCancel();
         setSubbedBlob(new Blob([subbed as BlobPart], { type: "video/mp4" }));
         setProgress(1);
@@ -752,7 +787,7 @@ function Dashboard() {
       moveToStage("extracting");
       setProgress(0);
       const audioSource: Blob = isTransportStream(file) && sourcePreviewBlob ? sourcePreviewBlob : file;
-      const audioBytes = await extractAudioMp3(audioSource, setProgress, { lowPerf });
+      const audioBytes = await extractAudioSmart(audioSource, setProgress, effLowPerf, perf.webcodecsAudio, appendLog);
       checkCancel();
       const audio = new Blob([audioBytes as BlobPart], { type: "audio/mpeg" });
       setAudioBlob(audio);
@@ -911,7 +946,7 @@ function Dashboard() {
       moveToStage("cutting");
       setProgress(0);
       appendLog(`[CUT] ${picked.length} selected blocks → ${formatSeconds(offset)}`);
-      const cut = await cutAndConcat(sourceForCut, parsedSegments, setProgress, { lowPerf, maxHeight, audioOffsetSec });
+      const cut = await cutAndConcat(sourceForCut, parsedSegments, setProgress, { lowPerf: effLowPerf, maxHeight: effMaxHeight, audioOffsetSec });
       checkCancel();
       const clip = new Blob([cut as BlobPart], { type: "video/mp4" });
       setClipBlob(clip);
@@ -928,7 +963,7 @@ function Dashboard() {
         videoWidth: dims.width,
         videoHeight: dims.height,
       });
-      const subbed = await burnSubtitles(clip, ass, setProgress, { lowPerf, maxHeight });
+      const subbed = await burnSubtitles(clip, ass, setProgress, { lowPerf: effLowPerf, maxHeight: effMaxHeight });
       checkCancel();
       setSubbedBlob(new Blob([subbed as BlobPart], { type: "video/mp4" }));
       setProgress(1);
@@ -1589,6 +1624,7 @@ function Dashboard() {
                       />
                     </div>
                   </div>
+                  <PerfSelector state={perfState} />
                   <div className="flex items-center justify-between">
                     <div>
                       <Label htmlFor="burn">Burn subtitles into video</Label>
@@ -1807,6 +1843,7 @@ function Dashboard() {
         }
         offset={audioOffsetSec}
         setOffset={setAudioOffsetSec}
+        perf={perf}
       />
 
       <footer className="mx-auto max-w-7xl px-6 py-8 text-xs text-muted-foreground">
