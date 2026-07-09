@@ -573,7 +573,7 @@ function Dashboard() {
       setProgress(0);
       let audioBytes: Uint8Array;
       try {
-        audioBytes = await extractAudioMp3(workingVideo, setProgress, { lowPerf });
+        audioBytes = await extractAudioSmart(workingVideo, setProgress, effLowPerf, perf.webcodecsAudio, appendLog);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (message.includes("No usable audio track") || isFfmpegFilesystemError(message)) {
@@ -763,7 +763,7 @@ function Dashboard() {
       moveToStage("extracting");
       setProgress(0);
       const audioSource: Blob = isTransportStream(file) && sourcePreviewBlob ? sourcePreviewBlob : file;
-      const audioBytes = await extractAudioMp3(audioSource, setProgress, { lowPerf });
+      const audioBytes = await extractAudioSmart(audioSource, setProgress, effLowPerf, perf.webcodecsAudio, appendLog);
       checkCancel();
       const audio = new Blob([audioBytes as BlobPart], { type: "audio/mpeg" });
       setAudioBlob(audio);
