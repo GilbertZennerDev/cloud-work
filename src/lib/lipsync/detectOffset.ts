@@ -464,7 +464,17 @@ export async function detectLipSyncOffset(clip: Blob, opts: DetectOptions = {}):
       console.warn("[lipsync] playback sampling failed, falling back to seeking", err);
       return null;
     });
-    if (!mouth) {
+    // If playback stalled or only produced a handful of frames, redo with seeking.
+    const coverageMin = Math.max(8, Math.floor(frameCount * 0.5));
+    const gotEnough = (arr: Float32Array | null) => {
+      if (!arr) return false;
+      let filled = 0;
+      for (let i = 0; i < arr.length; i++) if (!Number.isNaN(arr[i])) filled++;
+      return filled >= coverageMin;
+    };
+    if (!gotEnough(mouth)) {
+      // eslint-disable-next-line no-console
+      console.info("[lipsync] using seek-based frame sampling");
       mouth = await sampleMouthBySeeking(video, landmarker, fps, duration, report);
     }
 
