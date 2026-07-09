@@ -336,12 +336,23 @@ async function sampleMouthByPlayback(
   let nextIdx = 0;
   const toLandmarkerTime = createTimestampMapper(landmarker);
   const timeoutMs = Math.min(90_000, Math.max(15_000, duration * 2_500 + frameCount * 300));
+  // Watchdog: if rvfc never fires (Chromium throttles hidden/offscreen video),
+  // bail out fast so the seek fallback can run.
+  let framesSeen = 0;
+  const stallDeadline = window.setTimeout(() => {
+    if (framesSeen === 0) {
+      // eslint-disable-next-line no-console
+      console.warn("[lipsync] rvfc never fired within 2.5s — playback sampling stalled");
+      video.pause();
+    }
+  }, 2_500);
   try {
     await withTimeout(
       new Promise<void>((resolve) => {
         const step = (_now: number, metadata: { mediaTime?: number; presentationTime?: number }) => {
+          framesSeen++;
           const mediaTime = metadata.mediaTime ?? video.currentTime;
-          if (nextIdx >= frameCount || mediaTime >= duration || video.ended) {
+          if (nextIdx >= frameCount || mediaTime >= duration || video.ended || video.paused) {
             resolve();
             return;
           }
@@ -367,17 +378,16 @@ async function sampleMouthByPlayback(
       timeoutMs,
       "Timed out while analysing video frames",
     ).catch((err) => {
-      // Return the frames collected so far; downstream face-coverage checks
-      // decide whether this partial sample is useful. This prevents a late
-      // timeout from discarding otherwise valid analysis data and then trying
-      // to reuse the same VIDEO-mode landmarker with reset timestamps.
       // eslint-disable-next-line no-console
       console.warn("[lipsync] playback sampling ended early", err);
     });
   } finally {
+    window.clearTimeout(stallDeadline);
     video.pause();
   }
 
+  // If we captured no frames at all, signal caller to use the seek fallback.
+  if (nextIdx === 0) return null;
   return mouth;
 }
 
