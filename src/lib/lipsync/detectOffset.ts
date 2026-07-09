@@ -93,10 +93,7 @@ async function getLandmarkerWithTimeout(
       landmarkerCache.delete("GPU");
       // eslint-disable-next-line no-console
       console.warn("[lipsync] GPU delegate unavailable, falling back to CPU", err);
-      return {
-        landmarker: await withTimeout(getLandmarker("CPU"), 30_000, "CPU face model timed out"),
-        used: "CPU",
-      };
+      return await withTimeout(getLandmarker("CPU"), 30_000, "CPU face model timed out");
     }
   }
   return await withTimeout(getLandmarker("CPU"), 30_000, "CPU face model timed out");
