@@ -59,13 +59,23 @@ import {
   DEFAULT_STREAM_URL,
 } from "@/lib/hls/shared-recorder";
 import { SubtitlePreview } from "@/components/cutter/SubtitlePreview";
+import { LiveSubtitleOverlay } from "@/components/cutter/LiveSubtitleOverlay";
 import { SyncCalibrator } from "@/components/cutter/SyncCalibrator";
 import { PerfSelector } from "@/components/cutter/PerfSelector";
 import { usePerfTier } from "@/lib/perf/usePerfTier";
 import { extractAudioMp3Fast } from "@/lib/webcodecs/audio";
+import { takePendingSource } from "@/lib/session/pendingSource";
+import {
+  saveCutterSession,
+  loadCutterSession,
+  clearCutterSession,
+  makeRecordingKey,
+  makeFileKey,
+} from "@/lib/session/cutterSession";
 
 const indexSearchSchema = z.object({
   recording: z.string().uuid().optional(),
+  pending: z.string().uuid().optional(),
 });
 
 export const Route = createFileRoute("/")({
@@ -176,6 +186,17 @@ function formatDownloadBytes(bytes: number): string {
   const mb = bytes / 1024 / 1024;
   if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
   return `${mb.toFixed(1)} MB`;
+}
+
+function timeAgo(ts: number): string {
+  const secs = Math.max(1, Math.floor((Date.now() - ts) / 1000));
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
 }
 
 /**
@@ -347,6 +368,37 @@ function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search.recording]);
 
+  // If ?pending=<id> is present, hydrate from the in-memory hand-off store
+  // (used by Recordings' "Merge & Cut" bulk action).
+  const handledPendingRef = useRef<string | null>(null);
+  useEffect(() => {
+    const id = search.pending;
+    if (!id) return;
+    if (handledPendingRef.current === id) return;
+    handledPendingRef.current = id;
+    const payload = takePendingSource(id);
+    if (!payload) return;
+    setFile(payload.file);
+    setSourceTitle(payload.title);
+    setRecordingId(null);
+    setRawCues(payload.cues ?? []);
+    setSelectedCues(new Set());
+    if (payload.cues && payload.cues.length > 0) {
+      const shortened = shortenCues(payload.cues, { maxSentences, maxChars });
+      setCues(shortened);
+      setSrtText(cuesToSrt(shortened));
+      toast.success(`Loaded merged clip · ${shortened.length} blocks`);
+    } else {
+      setCues([]);
+      setSrtText(null);
+      toast.success(`Loaded merged clip · ${(payload.file.size / 1024 / 1024).toFixed(1)} MB`);
+    }
+    // Drop the pending id from the URL so a refresh doesn't try to re-hydrate.
+    navigate({ to: "/", search: {}, replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search.pending]);
+
+
   const runSnapshot = useCallback(async () => {
     if (snapshotBusy || !snapshotUrl) return;
     setSnapshotBusy(true);
@@ -482,6 +534,124 @@ function Dashboard() {
       setSrtText(cuesToSrt(next));
       return next;
     });
+
+  // ----- Auto-save & restore ----------------------------------------------
+  // Build a stable key for the current source so multiple in-flight projects
+  // don't overwrite each other. Recordings are keyed by id; local files by
+  // (name, size, lastModified) so re-picking the same file restores its work.
+  const sessionKey = useMemo(() => {
+    if (recordingId) return makeRecordingKey(recordingId);
+    if (file) return makeFileKey({ name: file.name, size: file.size, lastModified: file.lastModified });
+    return null;
+  }, [recordingId, file]);
+
+  const [restoreBanner, setRestoreBanner] = useState<{ savedAt: number; fileName?: string } | null>(null);
+  const restoredKeyRef = useRef<string | null>(null);
+
+  // On session-key change, look for a saved snapshot and offer to restore.
+  useEffect(() => {
+    if (!sessionKey) return;
+    if (restoredKeyRef.current === sessionKey) return;
+    let cancelled = false;
+    loadCutterSession(sessionKey).then((saved) => {
+      if (cancelled || !saved) return;
+      if (restoredKeyRef.current === sessionKey) return;
+      // Recording-backed sessions restore silently (transcript is already
+      // reloaded from the server; we just want the user's edits back).
+      if (sessionKey.startsWith("rec:")) {
+        applySavedSession(saved);
+        restoredKeyRef.current = sessionKey;
+      } else {
+        // Local files: show a banner so the user opts in explicitly.
+        setRestoreBanner({ savedAt: saved.savedAt, fileName: saved.fileName });
+      }
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionKey]);
+
+  const applySavedSession = (saved: Awaited<ReturnType<typeof loadCutterSession>>) => {
+    if (!saved) return;
+    if (saved.rawCues?.length) setRawCues(saved.rawCues);
+    if (saved.cues?.length) {
+      setCues(saved.cues);
+      setSrtText(cuesToSrt(saved.cues));
+    }
+    setSelectedCues(new Set(saved.selectedCues ?? []));
+    setMode(saved.mode);
+    if (saved.segments?.length) setSegments(saved.segments);
+    setSubX(saved.subX);
+    setSubY(saved.subY);
+    setFontSize(saved.fontSize);
+    setSubOutline(saved.subOutline);
+    setMaxSentences(saved.maxSentences);
+    setMaxChars(saved.maxChars);
+    setAudioOffsetSec(saved.audioOffsetSec);
+    setBurnIn(saved.burnIn);
+  };
+
+  const acceptRestore = async () => {
+    if (!sessionKey) return;
+    const saved = await loadCutterSession(sessionKey);
+    applySavedSession(saved);
+    restoredKeyRef.current = sessionKey;
+    setRestoreBanner(null);
+    toast.success("Previous session restored");
+  };
+
+  const discardRestore = async () => {
+    if (sessionKey) await clearCutterSession(sessionKey);
+    restoredKeyRef.current = sessionKey;
+    setRestoreBanner(null);
+  };
+
+  // Debounced auto-save on any meaningful state change.
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!sessionKey || !file) return;
+    // Nothing to persist for a brand-new session.
+    if (rawCues.length === 0 && cues.length === 0 && selectedCues.size === 0) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveCutterSession(sessionKey, {
+        fileName: file.name,
+        fileSize: file.size,
+        rawCues,
+        cues,
+        selectedCues: Array.from(selectedCues),
+        mode,
+        segments,
+        subX,
+        subY,
+        fontSize,
+        subOutline,
+        maxSentences,
+        maxChars,
+        audioOffsetSec,
+        burnIn,
+      }).catch(() => {});
+    }, 800);
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [
+    sessionKey, file, rawCues, cues, selectedCues, mode, segments,
+    subX, subY, fontSize, subOutline, maxSentences, maxChars, audioOffsetSec, burnIn,
+  ]);
+
+  const resetSession = async () => {
+    if (sessionKey) await clearCutterSession(sessionKey);
+    setRawCues([]);
+    setCues([]);
+    setSrtText(null);
+    setSelectedCues(new Set());
+    setSegments([{ start: "00:00", end: "00:30" }]);
+    setSubX(50); setSubY(88); setFontSize(28); setSubOutline(2);
+    setMaxSentences(2); setMaxChars(90); setAudioOffsetSec(0);
+    setMode("full");
+    toast.success("Session reset");
+  };
+
 
   const logRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -1096,9 +1266,30 @@ function Dashboard() {
       <main className="mx-auto max-w-7xl px-6 py-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         {/* LEFT: Controls */}
         <div className="space-y-6">
+          {restoreBanner && (
+            <Alert>
+              <AlertTitle className="text-sm">Restore your previous session?</AlertTitle>
+              <AlertDescription className="text-xs">
+                Found saved work
+                {restoreBanner.fileName ? ` for "${restoreBanner.fileName}"` : ""} from{" "}
+                {timeAgo(restoreBanner.savedAt)}. Includes transcript edits, cue selections, subtitle position and settings.
+                <div className="mt-2 flex gap-2">
+                  <Button size="sm" onClick={acceptRestore}>Restore</Button>
+                  <Button size="sm" variant="ghost" onClick={discardRestore}>Discard</Button>
+                </div>
+              </AlertDescription>
+            </Alert>
+          )}
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">1. Source video</CardTitle>
+              <CardTitle className="text-base flex items-center justify-between">
+                <span>1. Source video</span>
+                {sessionKey && (
+                  <Button size="sm" variant="ghost" onClick={resetSession} className="h-7 text-xs">
+                    Reset session
+                  </Button>
+                )}
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <label
@@ -1557,19 +1748,35 @@ function Dashboard() {
                       </span>
                     </div>
                     <p className="text-xs text-muted-foreground mb-2">
-                      Zeih den Text am Preview, oder benotz d'Sliders. Iwwerholl gëtt op déi geschnidde Videosgréisst
-                      berechent.
+                      {sourcePreviewUrl
+                        ? "Play the video and drag the caption directly on the real frame — what you see is what gets burned in."
+                        : "Zeih den Text am Preview, oder benotz d'Sliders. Iwwerholl gëtt op déi geschnidde Videosgréisst berechent."}
                     </p>
-                    <SubtitlePreview
-                      xPct={subX}
-                      yPct={subY}
-                      fontSize={fontSize}
-                      outline={subOutline}
-                      onChange={(x, y) => {
-                        setSubX(x);
-                        setSubY(y);
-                      }}
-                    />
+                    {sourcePreviewUrl ? (
+                      <LiveSubtitleOverlay
+                        src={sourcePreviewUrl}
+                        xPct={subX}
+                        yPct={subY}
+                        fontSize={fontSize}
+                        outline={subOutline}
+                        cues={cues.length > 0 ? cues : undefined}
+                        onChange={(x, y) => {
+                          setSubX(x);
+                          setSubY(y);
+                        }}
+                      />
+                    ) : (
+                      <SubtitlePreview
+                        xPct={subX}
+                        yPct={subY}
+                        fontSize={fontSize}
+                        outline={subOutline}
+                        onChange={(x, y) => {
+                          setSubX(x);
+                          setSubY(y);
+                        }}
+                      />
+                    )}
                     <div className="mt-3 space-y-3">
                       <div>
                         <div className="flex items-center justify-between">

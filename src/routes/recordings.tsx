@@ -1,10 +1,12 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
-import { Library, Scissors, Radio, Download, Trash2, ArrowRight, Loader2, Film, Upload, Play, FileText } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { Library, Scissors, Radio, Download, Trash2, ArrowRight, Loader2, Film, Upload, Play, FileText, Search, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -19,6 +21,8 @@ import {
 } from "@/lib/recordings.functions";
 import { TranscriptEditor } from "@/components/recordings/TranscriptEditor";
 import { RecordingThumbnail, setThumbnail, generateThumbnailFromBlob } from "@/components/recordings/RecordingThumbnail";
+import { mergeRecordings } from "@/lib/recordings/mergeChunks";
+import { setPendingSource } from "@/lib/session/pendingSource";
 
 
 
@@ -185,7 +189,91 @@ function RecordingsPage() {
     upload.mutate(files);
   };
 
-  const grouped = groupBySession(data ?? []);
+  // Multi-select + search for bulk actions.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [query, setQuery] = useState("");
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const [mergeLabel, setMergeLabel] = useState("");
+
+  const toggleSelected = (id: string) =>
+    setSelected((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  const clearSelected = () => setSelected(new Set());
+
+  const filteredRows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const rows = data ?? [];
+    if (!q) return rows;
+    return rows.filter((r) => {
+      if (r.title?.toLowerCase().includes(q)) return true;
+      if (r.storage_path.toLowerCase().includes(q)) return true;
+      if (r.session_date.includes(q)) return true;
+      if (r.transcript?.some((c) => c.text.toLowerCase().includes(q))) return true;
+      return false;
+    });
+  }, [data, query]);
+
+  const grouped = groupBySession(filteredRows);
+
+  const selectedRows = useMemo(
+    () => (data ?? []).filter((r) => selected.has(r.id) && r.status === "ready"),
+    [data, selected],
+  );
+
+  const selectWholeSession = (group: Group) => {
+    setSelected((prev) => {
+      const n = new Set(prev);
+      const readyIds = group.rows.filter((r) => r.status === "ready").map((r) => r.id);
+      const allIn = readyIds.every((id) => n.has(id));
+      if (allIn) readyIds.forEach((id) => n.delete(id));
+      else readyIds.forEach((id) => n.add(id));
+      return n;
+    });
+  };
+
+  const cutMerged = async () => {
+    if (selectedRows.length === 0) return;
+    if (selectedRows.length === 1) {
+      openInCutter(selectedRows[0]);
+      clearSelected();
+      return;
+    }
+    setMergeBusy(true);
+    const t = toast.loading(`Merging ${selectedRows.length} chunks…`);
+    try {
+      const { file, cues, title } = await mergeRecordings(selectedRows, (label, done, total) => {
+        setMergeLabel(`${label} (${done}/${total})`);
+      });
+      const id = setPendingSource({ file, cues, title });
+      toast.success(`Merged ${selectedRows.length} chunks → opening in Cutter`, { id: t });
+      clearSelected();
+      navigate({ to: "/", search: { pending: id } });
+    } catch (err) {
+      toast.error((err as Error).message, { id: t });
+    } finally {
+      setMergeBusy(false);
+      setMergeLabel("");
+    }
+  };
+
+  const downloadSelected = async () => {
+    for (const r of selectedRows) {
+      dl.mutate(r);
+      await new Promise((res) => setTimeout(res, 300));
+    }
+  };
+
+  const deleteSelected = () => {
+    if (selectedRows.length === 0) return;
+    if (!confirm(`Delete ${selectedRows.length} recording${selectedRows.length === 1 ? "" : "s"}?`)) return;
+    selectedRows.forEach((r) => del.mutate(r.id));
+    clearSelected();
+  };
+
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -228,14 +316,34 @@ function RecordingsPage() {
           }}
         >
           <div className="text-sm text-muted-foreground">
-            {data ? `${data.length} chunk${data.length === 1 ? "" : "s"}` : "…"}
+            {data
+              ? `${filteredRows.length}${query ? ` / ${data.length}` : ""} chunk${filteredRows.length === 1 ? "" : "s"}`
+              : "…"}
             {uploadProgress && (
               <span className="ml-2">
                 · Uploading {uploadProgress.done + 1}/{uploadProgress.total}: {uploadProgress.name}
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative">
+              <Search className="h-3.5 w-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search title, date, transcript…"
+                className="pl-7 h-8 w-64 text-sm"
+              />
+              {query && (
+                <button
+                  onClick={() => setQuery("")}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
             <input
               ref={fileInputRef}
               type="file"
@@ -267,6 +375,35 @@ function RecordingsPage() {
           </div>
         </div>
 
+        {/* Sticky bulk-action bar — appears only when something is selected. */}
+        {selectedRows.length > 0 && (
+          <div className="sticky top-0 z-10 -mx-6 px-6 py-2 bg-background/95 backdrop-blur border-b flex items-center gap-3 flex-wrap">
+            <span className="text-sm font-medium">
+              {selectedRows.length} selected
+              {mergeLabel && <span className="ml-2 text-xs text-muted-foreground font-mono">· {mergeLabel}</span>}
+            </span>
+            <div className="ml-auto flex items-center gap-2">
+              <Button size="sm" onClick={cutMerged} disabled={mergeBusy}>
+                {mergeBusy ? (
+                  <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                ) : (
+                  <Scissors className="h-3 w-3 mr-2" />
+                )}
+                {selectedRows.length === 1 ? "Open in Cutter" : `Merge & Cut (${selectedRows.length})`}
+              </Button>
+              <Button size="sm" variant="outline" onClick={downloadSelected} disabled={dl.isPending}>
+                <Download className="h-3 w-3 mr-2" /> Download
+              </Button>
+              <Button size="sm" variant="ghost" onClick={deleteSelected} disabled={del.isPending}>
+                <Trash2 className="h-3 w-3 mr-2" /> Delete
+              </Button>
+              <Button size="sm" variant="ghost" onClick={clearSelected}>
+                <X className="h-3 w-3 mr-1" /> Clear
+              </Button>
+            </div>
+          </div>
+        )}
+
         {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
         {error && <p className="text-sm text-destructive">{(error as Error).message}</p>}
 
@@ -279,20 +416,38 @@ function RecordingsPage() {
           </Card>
         )}
 
-        {grouped.map((group) => (
+        {grouped.map((group) => {
+          const readyIds = group.rows.filter((r) => r.status === "ready").map((r) => r.id);
+          const allReadySelected = readyIds.length > 0 && readyIds.every((id) => selected.has(id));
+          return (
           <Card key={group.date}>
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">
-                Session · {group.date}
-                <span className="ml-3 text-xs font-normal text-muted-foreground">
+              <CardTitle className="text-base flex items-center gap-3 flex-wrap">
+                <span>Session · {group.date}</span>
+                <span className="text-xs font-normal text-muted-foreground">
                   {group.rows.length} chunks · {formatBytes(group.totalBytes)}
                 </span>
+                {readyIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => selectWholeSession(group)}
+                    className="ml-auto text-[11px] px-2 py-0.5 rounded-full border hover:bg-muted transition-colors font-normal"
+                  >
+                    {allReadySelected ? "Deselect session" : "Select whole session"}
+                  </button>
+                )}
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="divide-y">
                 {group.rows.map((r) => (
-                  <div key={r.id} className="py-2 flex items-center gap-3">
+                  <div key={r.id} className={"py-2 flex items-center gap-3 " + (selected.has(r.id) ? "bg-primary/5 -mx-2 px-2 rounded" : "")}>
+                    <Checkbox
+                      checked={selected.has(r.id)}
+                      disabled={r.status !== "ready"}
+                      onCheckedChange={() => toggleSelected(r.id)}
+                      aria-label={`Select chunk ${r.chunk_index}`}
+                    />
                     <div className="w-16 text-xs font-mono text-muted-foreground">
                       #{String(r.chunk_index).padStart(3, "0")}
                     </div>
@@ -378,7 +533,8 @@ function RecordingsPage() {
               </div>
             </CardContent>
           </Card>
-        ))}
+          );
+        })}
       </main>
 
       <Dialog
