@@ -18,6 +18,12 @@ interface Props {
   onChange: (patch: { xPct?: number; yPct?: number }) => void;
   /** Inline (list-row) or large (dialog). */
   size?: "inline" | "large";
+  /**
+   * Actual source video width in px. Used to scale ASS `fontSize`/`outline`
+   * (which are in video pixels) into preview pixels so the overlay matches
+   * the burned-in output. Defaults to 1280 for backward compat.
+   */
+  videoWidth?: number;
   /** If false, defers snapshot until the element is visible. */
   eager?: boolean;
 }
