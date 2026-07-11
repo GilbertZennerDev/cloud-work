@@ -487,11 +487,18 @@ export function cuesToAss(cues: AssCue[], style: SubtitleStyle): string {
   ].join("\n");
 }
 
+export interface FontOverride {
+  family: string;
+  url: string;
+  format: string;
+}
+
 export async function burnSubtitles(
   video: File | Blob,
   assText: string,
   onP?: ProgressCb,
   perf: PerfOptions = {},
+  fontOverride?: FontOverride,
 ): Promise<Uint8Array> {
   const ffmpeg = await getFFmpeg();
   const off = onP ? onProgress(ffmpeg, onP) : () => {};
@@ -499,7 +506,7 @@ export async function burnSubtitles(
   const inputName = `burn_input_${token}.mp4`;
   const subsName = `subs_${token}.ass`;
   const outputName = `burned_${token}.mp4`;
-  await ensureFont(ffmpeg);
+  await ensureFont(ffmpeg, fontOverride);
   await ffmpeg.writeFile(inputName, await fetchFile(video));
   await ffmpeg.writeFile(subsName, new TextEncoder().encode(assText));
   const sf = scaleFilter(perf);
