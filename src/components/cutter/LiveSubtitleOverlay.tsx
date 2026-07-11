@@ -17,6 +17,8 @@ interface Props {
   onCueChange?: (cueIndex: number, patch: { xPct?: number; yPct?: number }) => void;
   onTimeUpdate?: (t: number) => void;
   lockAxis?: LockAxis;
+  /** Actual source-video width in px so fontSize/outline scale identically to burn-in. */
+  videoWidth?: number;
   /** Optional external ref for parent-controlled seeking. */
   videoRef?: React.RefObject<HTMLVideoElement | null>;
 }
