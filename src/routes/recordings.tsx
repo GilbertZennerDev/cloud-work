@@ -533,7 +533,8 @@ function RecordingsPage() {
               </div>
             </CardContent>
           </Card>
-        ))}
+          );
+        })}
       </main>
 
       <Dialog
