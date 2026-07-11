@@ -321,33 +321,38 @@ const DEFAULT_FONT_FAMILY = "Noto Sans";
 const fontsInstalled = new WeakMap<object, Set<string>>();
 
 /**
- * Fetch a font file into ffmpeg's /fonts dir. Idempotent per instance/family.
- * When no override is given, falls back to the bundled Noto Sans.
+ * Fetch font files into ffmpeg's /fonts dir. Idempotent per instance/family.
+ * Always installs the Noto Sans fallback so libass has a guaranteed usable
+ * face even when a custom override can't be matched by internal family name.
  */
 async function ensureFont(
   ffmpeg: Awaited<ReturnType<typeof getFFmpeg>>,
   override?: { family: string; url: string; format: string },
 ) {
-  const family = override?.family ?? DEFAULT_FONT_FAMILY;
-  const url = override?.url ?? FONT_URL;
-  const format = override?.format ?? "ttf";
   let installed = fontsInstalled.get(ffmpeg);
   if (!installed) {
     installed = new Set();
     fontsInstalled.set(ffmpeg, installed);
   }
-  if (installed.has(family)) return;
   try {
     await ffmpeg.createDir("/fonts");
   } catch {
     // already exists
   }
-  const bytes = await fetchFile(url);
-  // libass reads by file extension; sanitize family for filesystem use.
-  const safeName = family.replace(/[^a-zA-Z0-9-]+/g, "_");
-  await ffmpeg.writeFile(`/fonts/${safeName}.${format}`, bytes);
-  installed.add(family);
+  const writeOne = async (family: string, url: string, format: string, path: string) => {
+    if (installed!.has(family)) return;
+    const bytes = await fetchFile(url);
+    await ffmpeg.writeFile(path, bytes);
+    installed!.add(family);
+  };
+  // Always install Noto Sans as the guaranteed fallback face.
+  await writeOne(DEFAULT_FONT_FAMILY, FONT_URL, "ttf", "/fonts/NotoSans-Regular.ttf");
+  if (override) {
+    const safeName = override.family.replace(/[^a-zA-Z0-9-]+/g, "_");
+    await writeOne(override.family, override.url, override.format, `/fonts/${safeName}.${override.format}`);
+  }
 }
+
 
 export interface SubtitleStyle {
   /** Font size in pixels (relative to source video height in ASS PlayRes) */
@@ -500,6 +505,14 @@ export async function burnSubtitles(
   perf: PerfOptions = {},
   fontOverride?: FontOverride,
 ): Promise<Uint8Array> {
+  // Guard against silent no-op burns: an ASS with zero Dialogue lines yields
+  // an output MP4 with no captions, which historically looked like "the burn
+  // is broken" when in fact cues were filtered upstream.
+  const dialogueCount = (assText.match(/^Dialogue:/gm) ?? []).length;
+  if (dialogueCount === 0) {
+    throw new Error("Subtitle burn-in aborted: no cues to render (empty ASS)");
+  }
+
   const ffmpeg = await getFFmpeg();
   const off = onP ? onProgress(ffmpeg, onP) : () => {};
   const token = tempToken();
@@ -510,9 +523,24 @@ export async function burnSubtitles(
   await ffmpeg.writeFile(inputName, await fetchFile(video));
   await ffmpeg.writeFile(subsName, new TextEncoder().encode(assText));
   const sf = scaleFilter(perf);
-  const vf = sf
-    ? `${sf},ass=${subsName}:fontsdir=/fonts`
-    : `ass=${subsName}:fontsdir=/fonts`;
+  // Use the `subtitles` filter with explicit `filename=` so the positional
+  // arg parser can't misinterpret the path, and `force_style=FontName=<family>`
+  // to reassert the font at filter time — a defence in depth against libass
+  // failing to match the ASS header Fontname against the /fonts directory.
+  const familyForForce = (fontOverride?.family ?? DEFAULT_FONT_FAMILY).replace(/'/g, "");
+  const subsFilter = `subtitles=filename=${subsName}:fontsdir=/fonts:force_style='FontName=${familyForForce}'`;
+  const vf = sf ? `${sf},${subsFilter}` : subsFilter;
+
+  // Capture ffmpeg logs during the burn so libass warnings ("Font 'X' not
+  // found", "Could not open font", etc.) surface in the Cutter's log panel.
+  const burnLogs: string[] = [];
+  const { onFfmpegLog } = await import("./client");
+  const unsubscribeLog = onFfmpegLog((msg) => {
+    burnLogs.push(msg);
+    if (burnLogs.length > 500) burnLogs.shift();
+  });
+
+
   try {
     // NOTE: Do NOT combine `-map 0:v:0` with `-vf` here. When the video
     // stream is explicitly mapped, ffmpeg.wasm's simple-filter (`-vf`) path
@@ -530,13 +558,22 @@ export async function burnSubtitles(
     ]);
 
     return await readOutputFile(ffmpeg, outputName, "Subtitle burn-in");
+  } catch (err) {
+    // Attach the last few libass/ffmpeg log lines to the error so the UI
+    // shows *why* the burn failed instead of a bare "exited with code 1".
+    const tail = burnLogs.slice(-20).join("\n");
+    const base = err instanceof Error ? err.message : String(err);
+    throw new Error(tail ? `${base}\n---\n${tail}` : base);
   } finally {
     off();
+    unsubscribeLog();
+
     try { await ffmpeg.deleteFile(inputName); } catch {}
     try { await ffmpeg.deleteFile(subsName); } catch {}
     try { await ffmpeg.deleteFile(outputName); } catch {}
   }
 }
+
 
 /** Read intrinsic width/height from a video File/Blob using a hidden element. */
 export async function getVideoDimensions(src: File | Blob): Promise<{ width: number; height: number }> {
