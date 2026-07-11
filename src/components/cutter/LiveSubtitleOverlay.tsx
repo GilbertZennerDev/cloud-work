@@ -148,7 +148,7 @@ export function LiveSubtitleOverlay({
         aria-label="Drag to reposition subtitle"
       >
         <span
-          className="absolute font-sans font-semibold text-white text-center leading-tight whitespace-pre-line pointer-events-none px-2"
+          className="absolute font-semibold text-white text-center leading-tight whitespace-pre-line pointer-events-none px-2"
           style={{
             left: `${activeX}%`,
             top: `${activeY}%`,
@@ -156,6 +156,7 @@ export function LiveSubtitleOverlay({
             fontSize: `${previewFont}px`,
             textShadow: shadow,
             maxWidth: "90%",
+            fontFamily: fontFamily ? `"${fontFamily}", system-ui, sans-serif` : undefined,
           }}
         >
           {text}
