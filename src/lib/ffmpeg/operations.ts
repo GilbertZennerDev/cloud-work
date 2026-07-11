@@ -765,19 +765,12 @@ export async function burnSubtitles(
     // renders without any burned subtitles. Rely on default stream
     // selection (best video + best audio) so `-vf` is applied correctly.
 
-    // For uploaded .otf/.ttf files, first bypass libass font discovery
-    // entirely and render with drawtext's direct `fontfile=`. This fixes fonts
-    // like Whitney Book whose internal family names differ from the UI label.
-    const directFontPath = installedFont.override?.path;
-    const directVf = directFontPath ? directFontDrawtextChain(assText, directFontPath, perf) : null;
-    if (directVf) {
-      try {
-        return await runBurn(directVf);
-      } catch {
-        // Some ffmpeg.wasm builds omit drawtext/freetype. Fall back to libass
-        // below, using every internal name parsed from the uploaded font file.
-      }
-    }
+    // NOTE: We intentionally do NOT use ffmpeg's `drawtext` filter here.
+    // ffmpeg.wasm's drawtext build crashes with "memory access out of bounds"
+    // when given many cues with `enable='between(t,...)'` expressions.
+    // Instead we go straight to libass, iterating every internal family name
+    // parsed from the uploaded font file so libass can match the real name
+    // (e.g. Whitney Book's PostScript/internal name differs from the UI label).
 
     const sf = scaleFilter(perf);
     const candidateFamilies = await fontNameCandidates(
