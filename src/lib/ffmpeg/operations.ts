@@ -566,7 +566,8 @@ export async function burnSubtitles(
     throw new Error(tail ? `${base}\n---\n${tail}` : base);
   } finally {
     off();
-    onFfmpegLog(() => {});
+    unsubscribeLog();
+
     try { await ffmpeg.deleteFile(inputName); } catch {}
     try { await ffmpeg.deleteFile(subsName); } catch {}
     try { await ffmpeg.deleteFile(outputName); } catch {}
