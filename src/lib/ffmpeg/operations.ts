@@ -334,15 +334,21 @@ const DEFAULT_FONT_FAMILY = "Noto Sans";
 // on demand without re-writing the same file every call.
 const fontsInstalled = new WeakMap<object, Set<string>>();
 
+interface InstalledFontFile {
+  family: string;
+  path: string;
+  bytes: Uint8Array;
+}
+
 /**
- * Fetch font files into ffmpeg's /fonts dir. Idempotent per instance/family.
- * Always installs the Noto Sans fallback so libass has a guaranteed usable
- * face even when a custom override can't be matched by internal family name.
+ * Fetch font files into ffmpeg's /fonts dir. Idempotent per exact file.
+ * Always installs the Noto Sans fallback so there is a guaranteed usable face,
+ * and returns the actual uploaded font path for direct drawtext fallback.
  */
 async function ensureFont(
   ffmpeg: Awaited<ReturnType<typeof getFFmpeg>>,
   override?: { family: string; url: string; format: string },
-) {
+): Promise<{ fallback: InstalledFontFile; override?: InstalledFontFile }> {
   let installed = fontsInstalled.get(ffmpeg);
   if (!installed) {
     installed = new Set();
@@ -353,18 +359,195 @@ async function ensureFont(
   } catch {
     // already exists
   }
-  const writeOne = async (family: string, url: string, format: string, path: string) => {
-    if (installed!.has(family)) return;
-    const bytes = await fetchFile(url);
-    await ffmpeg.writeFile(path, bytes);
-    installed!.add(family);
+  const writeOne = async (family: string, url: string, path: string): Promise<InstalledFontFile> => {
+    const bytes = await fetchFile(url) as Uint8Array;
+    const key = `${family}|${url}|${path}`;
+    if (!installed!.has(key)) {
+      // Re-write on first use of this exact file. Signed URLs may point to a
+      // different uploaded file with the same display family.
+      await ffmpeg.writeFile(path, bytes);
+      installed!.add(key);
+    }
+    return { family, path, bytes };
   };
-  // Always install Noto Sans as the guaranteed fallback face.
-  await writeOne(DEFAULT_FONT_FAMILY, FONT_URL, "ttf", "/fonts/NotoSans-Regular.ttf");
-  if (override) {
-    const safeName = override.family.replace(/[^a-zA-Z0-9-]+/g, "_");
-    await writeOne(override.family, override.url, override.format, `/fonts/${safeName}.${override.format}`);
+  const fallback = await writeOne(DEFAULT_FONT_FAMILY, FONT_URL, "/fonts/NotoSans-Regular.ttf");
+  if (!override) return { fallback };
+
+  const safeName = override.family.replace(/[^a-zA-Z0-9-]+/g, "_") || "CustomFont";
+  const custom = await writeOne(override.family, override.url, `/fonts/${safeName}.${override.format}`);
+  return { fallback, override: custom };
+}
+
+function uniqueStrings(values: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const cleaned = value?.replace(/\s+/g, " ").trim();
+    if (!cleaned || seen.has(cleaned)) continue;
+    seen.add(cleaned);
+    out.push(cleaned);
   }
+  return out;
+}
+
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+async function fontNameCandidates(fontBytes: Uint8Array | undefined, fallbackFamily: string): Promise<string[]> {
+  if (!fontBytes) return [sanitizeAssFontFamily(fallbackFamily)];
+  try {
+    const opentype = await import("opentype.js");
+    const font = opentype.parse(toArrayBuffer(fontBytes));
+    const names = font.names as unknown as Record<string, Record<string, string> | undefined>;
+    const pick = (key: string) => {
+      const entry = names[key];
+      if (!entry) return null;
+      return entry.en || Object.values(entry)[0] || null;
+    };
+    const preferredFamily = pick("preferredFamily");
+    const fontFamily = pick("fontFamily");
+    const fullName = pick("fullName");
+    const postScriptName = pick("postScriptName");
+    const preferredSubfamily = pick("preferredSubfamily");
+    const fontSubfamily = pick("fontSubfamily");
+    const familyWithPreferredStyle = preferredFamily && preferredSubfamily && !/^(regular|normal)$/i.test(preferredSubfamily)
+      ? `${preferredFamily} ${preferredSubfamily}`
+      : null;
+    const familyWithStyle = fontFamily && fontSubfamily && !/^(regular|normal)$/i.test(fontSubfamily)
+      ? `${fontFamily} ${fontSubfamily}`
+      : null;
+
+    // Uploaded OTFs commonly match in ffmpeg by internal Full/PostScript names
+    // (for example "Whitney-Book") rather than the CSS display family.
+    const candidates = uniqueStrings([
+      fullName,
+      postScriptName,
+      familyWithPreferredStyle,
+      familyWithStyle,
+      preferredFamily,
+      fontFamily,
+      fallbackFamily,
+    ]).map(sanitizeAssFontFamily);
+    return candidates.length > 0 ? candidates : [sanitizeAssFontFamily(fallbackFamily)];
+  } catch {
+    return [sanitizeAssFontFamily(fallbackFamily)];
+  }
+}
+
+interface DrawtextCue {
+  start: number;
+  end: number;
+  text: string;
+  xPct: number;
+  yPct: number;
+}
+
+interface DrawtextAssData {
+  width: number;
+  height: number;
+  fontSize: number;
+  outline: number;
+  cues: DrawtextCue[];
+}
+
+function parseAssClock(value: string): number {
+  const m = value.trim().match(/^(\d+):(\d{2}):(\d{2})\.(\d{1,2})$/);
+  if (!m) return 0;
+  return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) + Number(m[4].padEnd(2, "0")) / 100;
+}
+
+function unescapeAssText(text: string): string {
+  return text
+    .replace(/\\N/g, "\n")
+    .replace(/\\\{/g, "{")
+    .replace(/\\\}/g, "}")
+    .replace(/\\\\/g, "\\");
+}
+
+function parseGeneratedAssForDrawtext(assText: string): DrawtextAssData | null {
+  const width = Number(assText.match(/^PlayResX:\s*(\d+)/m)?.[1] ?? 0);
+  const height = Number(assText.match(/^PlayResY:\s*(\d+)/m)?.[1] ?? 0);
+  const styleLine = assText.match(/^Style:\s*Default,(.*)$/m)?.[1];
+  if (!width || !height || !styleLine) return null;
+  const styleParts = styleLine.split(",");
+  const fontSize = Math.max(1, Number(styleParts[2] ?? 28));
+  const outline = Math.max(0, Number(styleParts[16] ?? 2));
+  const cues: DrawtextCue[] = [];
+
+  for (const line of assText.split(/\r?\n/)) {
+    if (!line.startsWith("Dialogue:")) continue;
+    const payload = line.slice("Dialogue:".length).trimStart();
+    let cursor = 0;
+    const fields: string[] = [];
+    for (let i = 0; i < 9; i++) {
+      const next = payload.indexOf(",", cursor);
+      if (next === -1) break;
+      fields.push(payload.slice(cursor, next));
+      cursor = next + 1;
+    }
+    if (fields.length !== 9) continue;
+    const rawText = payload.slice(cursor);
+    const pos = rawText.match(/^\{\\pos\(([-\d.]+),([-\d.]+)\)\}(.*)$/s);
+    if (!pos) continue;
+    const start = parseAssClock(fields[1]);
+    const end = parseAssClock(fields[2]);
+    if (end <= start) continue;
+    cues.push({
+      start,
+      end,
+      xPct: Math.max(0, Math.min(100, (Number(pos[1]) / width) * 100)),
+      yPct: Math.max(0, Math.min(100, (Number(pos[2]) / height) * 100)),
+      text: unescapeAssText(pos[3]),
+    });
+  }
+
+  return cues.length > 0 ? { width, height, fontSize, outline, cues } : null;
+}
+
+function escapeDrawtextValue(value: string): string {
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/:/g, "\\:")
+    .replace(/,/g, "\\,")
+    .replace(/%/g, "\\%")
+    .replace(/\r?\n/g, "\\n");
+}
+
+function drawtextFilter(fontPath: string, cue: DrawtextCue, fontSize: number, outline: number): string {
+  const x = (cue.xPct / 100).toFixed(5);
+  const y = (cue.yPct / 100).toFixed(5);
+  return [
+    "drawtext",
+    `fontfile='${escapeFilterOption(fontPath)}'`,
+    `text='${escapeDrawtextValue(cue.text)}'`,
+    `x='(w*${x})-(text_w/2)'`,
+    `y='(h*${y})-(text_h/2)'`,
+    `fontsize=${Math.max(1, Math.round(fontSize))}`,
+    "fontcolor=white",
+    "bordercolor=black",
+    `borderw=${Math.max(0, Math.round(outline))}`,
+    "line_spacing=2",
+    "fix_bounds=1",
+    `enable='between(t,${cue.start.toFixed(3)},${cue.end.toFixed(3)})'`,
+  ].join(":");
+}
+
+function directFontDrawtextChain(assText: string, fontPath: string, perf: PerfOptions): string | null {
+  const parsed = parseGeneratedAssForDrawtext(assText);
+  if (!parsed) return null;
+  const sf = scaleFilter(perf);
+  return [
+    "setpts=PTS-STARTPTS",
+    sf,
+    ...parsed.cues.map((cue) => drawtextFilter(fontPath, cue, parsed.fontSize, parsed.outline)),
+  ].filter(Boolean).join(",");
+}
+
+function replaceAssFontFamily(assText: string, family: string): string {
+  const safeFamily = sanitizeAssFontFamily(family);
+  return assText.replace(/^Style:\s*Default,([^,]*),(.*)$/m, `Style: Default,${safeFamily},$2`);
 }
 
 
@@ -547,18 +730,8 @@ export async function burnSubtitles(
   const subsName = `subs_${token}.ass`;
   const outputName = `burned_${token}.mp4`;
   const burnFont = fontOverride && isBurnCompatibleFont(fontOverride.format) ? fontOverride : undefined;
-  await ensureFont(ffmpeg, burnFont);
+  const installedFont = await ensureFont(ffmpeg, burnFont);
   await ffmpeg.writeFile(inputName, await fetchFile(video));
-  await ffmpeg.writeFile(subsName, new TextEncoder().encode(assText));
-  const sf = scaleFilter(perf);
-  // Use the `subtitles` filter with explicit `filename=` so the positional
-  // arg parser can't misinterpret the path, and `force_style=FontName=<family>`
-  // to reassert the font at filter time — a defence in depth against libass
-  // failing to match the ASS header Fontname against the /fonts directory.
-  const forcedFamily = sanitizeAssFontFamily(burnFont?.family ?? DEFAULT_FONT_FAMILY);
-  const subsFilter = subtitleFilter(subsName, forcedFamily);
-  const filters = ["setpts=PTS-STARTPTS", sf, subsFilter].filter(Boolean);
-  const vf = filters.join(",");
 
   // Capture ffmpeg logs during the burn so libass warnings ("Font 'X' not
   // found", "Could not open font", etc.) surface in the Cutter's log panel.
@@ -571,23 +744,60 @@ export async function burnSubtitles(
 
 
   try {
+    const runBurn = async (vf: string) => {
+      try { await ffmpeg.deleteFile(outputName); } catch {}
+      await ffmpeg.exec([
+        "-i", inputName,
+        "-vf", vf,
+        ...encodeArgs(perf),
+        "-c:a", "aac", "-b:a", perf.lowPerf ? "96k" : "128k",
+        ...threadArgs(perf),
+        "-avoid_negative_ts", "make_zero",
+        "-movflags", "+faststart",
+        "-y", outputName,
+      ]);
+      return await readOutputFile(ffmpeg, outputName, "Subtitle burn-in");
+    };
+
     // NOTE: Do NOT combine `-map 0:v:0` with `-vf` here. When the video
     // stream is explicitly mapped, ffmpeg.wasm's simple-filter (`-vf`) path
     // can be bypassed and the video passes through un-filtered — the output
     // renders without any burned subtitles. Rely on default stream
     // selection (best video + best audio) so `-vf` is applied correctly.
-    await ffmpeg.exec([
-      "-i", inputName,
-      "-vf", vf,
-      ...encodeArgs(perf),
-      "-c:a", "aac", "-b:a", perf.lowPerf ? "96k" : "128k",
-      ...threadArgs(perf),
-      "-avoid_negative_ts", "make_zero",
-      "-movflags", "+faststart",
-      "-y", outputName,
-    ]);
 
-    return await readOutputFile(ffmpeg, outputName, "Subtitle burn-in");
+    // For uploaded .otf/.ttf files, first bypass libass font discovery
+    // entirely and render with drawtext's direct `fontfile=`. This fixes fonts
+    // like Whitney Book whose internal family names differ from the UI label.
+    const directFontPath = installedFont.override?.path;
+    const directVf = directFontPath ? directFontDrawtextChain(assText, directFontPath, perf) : null;
+    if (directVf) {
+      try {
+        return await runBurn(directVf);
+      } catch {
+        // Some ffmpeg.wasm builds omit drawtext/freetype. Fall back to libass
+        // below, using every internal name parsed from the uploaded font file.
+      }
+    }
+
+    const sf = scaleFilter(perf);
+    const candidateFamilies = await fontNameCandidates(
+      installedFont.override?.bytes,
+      burnFont?.family ?? DEFAULT_FONT_FAMILY,
+    );
+    const fallbacks = installedFont.override ? [...candidateFamilies, DEFAULT_FONT_FAMILY] : [DEFAULT_FONT_FAMILY];
+    let lastError: unknown = null;
+    for (const family of uniqueStrings(fallbacks)) {
+      const safeAss = replaceAssFontFamily(assText, family);
+      await ffmpeg.writeFile(subsName, new TextEncoder().encode(safeAss));
+      const subsFilter = subtitleFilter(subsName, family);
+      const vf = ["setpts=PTS-STARTPTS", sf, subsFilter].filter(Boolean).join(",");
+      try {
+        return await runBurn(vf);
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    throw lastError ?? new Error("Subtitle burn-in failed");
   } catch (err) {
     // Attach the last few libass/ffmpeg log lines to the error so the UI
     // shows *why* the burn failed instead of a bare "exited with code 1".
