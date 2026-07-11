@@ -566,6 +566,10 @@ function Dashboard() {
     setCues((prev) => prev.map((c) => (c.index === idx ? { ...c, ...patch } : c)));
   const resetCuePos = (idx: number) =>
     setCues((prev) => prev.map((c) => (c.index === idx ? { ...c, xPct: undefined, yPct: undefined } : c)));
+  const applyPosToFollowing = (fromIdx: number, xPct: number, yPct: number) =>
+    setCues((prev) => prev.map((c) => (c.index >= fromIdx ? { ...c, xPct, yPct } : c)));
+  const applyPosToAll = (xPct: number, yPct: number) =>
+    setCues((prev) => prev.map((c) => ({ ...c, xPct, yPct })));
   const updateCueText = (idx: number, text: string) =>
     setCues((prev) => {
       const next = prev.map((c) => (c.index === idx ? { ...c, text } : c));
