@@ -35,7 +35,7 @@ interface Props {
  */
 export function LiveSubtitleOverlay({
   src, xPct, yPct, fontSize, outline, cues, defaultSample = "Beispill Ennertitlen",
-  onChange, onCueChange, onTimeUpdate, lockAxis = "free", videoWidth, videoRef,
+  onChange, onCueChange, onTimeUpdate, lockAxis = "free", videoWidth, videoRef, fontFamily,
 }: Props) {
   const internalVideoRef = useRef<HTMLVideoElement>(null);
   const videoElRef = videoRef ?? internalVideoRef;
