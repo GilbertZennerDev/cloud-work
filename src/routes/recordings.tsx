@@ -316,14 +316,34 @@ function RecordingsPage() {
           }}
         >
           <div className="text-sm text-muted-foreground">
-            {data ? `${data.length} chunk${data.length === 1 ? "" : "s"}` : "…"}
+            {data
+              ? `${filteredRows.length}${query ? ` / ${data.length}` : ""} chunk${filteredRows.length === 1 ? "" : "s"}`
+              : "…"}
             {uploadProgress && (
               <span className="ml-2">
                 · Uploading {uploadProgress.done + 1}/{uploadProgress.total}: {uploadProgress.name}
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative">
+              <Search className="h-3.5 w-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search title, date, transcript…"
+                className="pl-7 h-8 w-64 text-sm"
+              />
+              {query && (
+                <button
+                  onClick={() => setQuery("")}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
             <input
               ref={fileInputRef}
               type="file"
@@ -354,6 +374,35 @@ function RecordingsPage() {
             </Button>
           </div>
         </div>
+
+        {/* Sticky bulk-action bar — appears only when something is selected. */}
+        {selectedRows.length > 0 && (
+          <div className="sticky top-0 z-10 -mx-6 px-6 py-2 bg-background/95 backdrop-blur border-b flex items-center gap-3 flex-wrap">
+            <span className="text-sm font-medium">
+              {selectedRows.length} selected
+              {mergeLabel && <span className="ml-2 text-xs text-muted-foreground font-mono">· {mergeLabel}</span>}
+            </span>
+            <div className="ml-auto flex items-center gap-2">
+              <Button size="sm" onClick={cutMerged} disabled={mergeBusy}>
+                {mergeBusy ? (
+                  <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                ) : (
+                  <ScissorsIcon className="h-3 w-3 mr-2" />
+                )}
+                {selectedRows.length === 1 ? "Open in Cutter" : `Merge & Cut (${selectedRows.length})`}
+              </Button>
+              <Button size="sm" variant="outline" onClick={downloadSelected} disabled={dl.isPending}>
+                <Download className="h-3 w-3 mr-2" /> Download
+              </Button>
+              <Button size="sm" variant="ghost" onClick={deleteSelected} disabled={del.isPending}>
+                <Trash2 className="h-3 w-3 mr-2" /> Delete
+              </Button>
+              <Button size="sm" variant="ghost" onClick={clearSelected}>
+                <X className="h-3 w-3 mr-1" /> Clear
+              </Button>
+            </div>
+          </div>
+        )}
 
         {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
         {error && <p className="text-sm text-destructive">{(error as Error).message}</p>}
