@@ -63,6 +63,10 @@ import {
 } from "@/lib/hls/shared-recorder";
 import { SubtitlePreview } from "@/components/cutter/SubtitlePreview";
 import { LiveSubtitleOverlay } from "@/components/cutter/LiveSubtitleOverlay";
+import { CuePreview } from "@/components/cutter/CuePreview";
+import { CuePositionDialog } from "@/components/cutter/CuePositionDialog";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Maximize2, LockKeyhole, MoveHorizontal, MoveVertical } from "lucide-react";
 import { SyncCalibrator } from "@/components/cutter/SyncCalibrator";
 import { PerfSelector } from "@/components/cutter/PerfSelector";
 import { usePerfTier } from "@/lib/perf/usePerfTier";
