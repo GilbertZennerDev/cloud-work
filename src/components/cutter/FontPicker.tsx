@@ -18,6 +18,7 @@ import {
   deleteFont,
   markFontReady,
   setDefaultFont,
+  updateFontFamily,
   type FontRow,
 } from "@/lib/fonts.functions";
 import { useFonts } from "@/lib/fonts/useFonts";
@@ -27,11 +28,45 @@ const DEFAULT_FAMILY_VALUE = "__default__";
 const MAX_BYTES = 5 * 1024 * 1024;
 const ALLOWED_EXT = /\.(ttf|otf|woff2?|)$/i;
 
-function extractFamily(filename: string): string {
+function filenameFamily(filename: string): string {
   const stem = filename.replace(/\.(ttf|otf|woff2?|)$/i, "").trim();
-  // Normalise separators to spaces; keep alnum + spaces + hyphens.
   const cleaned = stem.replace(/[_.]+/g, " ").replace(/\s+/g, " ").trim();
   return cleaned || stem || "Custom Font";
+}
+
+/**
+ * Read the font's real family name from its `name` table. libass inside
+ * ffmpeg matches fonts by this internal name, so ASS Fontname MUST equal it
+ * — otherwise the burn silently falls back to Noto Sans even when the CSS
+ * @font-face preview looks correct.
+ *
+ * opentype.js only handles uncompressed TTF/OTF. For WOFF/WOFF2 we fall back
+ * to the filename-derived family; the burn may then miss the font, but we
+ * warn the user.
+ */
+async function detectFamily(file: Blob, filename: string, format: string): Promise<{ family: string; verified: boolean }> {
+  const fallback = filenameFamily(filename);
+  if (format !== "ttf" && format !== "otf") return { family: fallback, verified: false };
+  try {
+    const opentype = await import("opentype.js");
+    const buf = await file.arrayBuffer();
+    const font = opentype.parse(buf);
+    const names = font.names as Record<string, Record<string, string> | undefined>;
+    const pick = (key: string) => {
+      const entry = names[key];
+      if (!entry) return null;
+      return entry.en || Object.values(entry)[0] || null;
+    };
+    const real =
+      pick("preferredFamily") ||
+      pick("fontFamily") ||
+      pick("fullName") ||
+      null;
+    if (real && real.trim()) return { family: real.trim(), verified: true };
+  } catch {
+    // Parsing failed — fall through to filename fallback.
+  }
+  return { family: fallback, verified: false };
 }
 
 function extractFormat(filename: string): "ttf" | "otf" | "woff" | "woff2" | null {
