@@ -523,6 +523,7 @@ function Dashboard() {
   const [maxHeight, setMaxHeight] = useState<0 | 480 | 720 | 1080>(0);
   const [audioOffsetSec, setAudioOffsetSec] = useState(0);
   const [syncOpen, setSyncOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const perfState = usePerfTier();
   const perf = perfState.profile;
