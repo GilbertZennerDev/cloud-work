@@ -1,10 +1,12 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
-import { Library, Scissors, Radio, Download, Trash2, ArrowRight, Loader2, Film, Upload, Play, FileText } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { Library, Scissors, Radio, Download, Trash2, ArrowRight, Loader2, Film, Upload, Play, FileText, Search, X, Scissors as ScissorsIcon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -19,6 +21,8 @@ import {
 } from "@/lib/recordings.functions";
 import { TranscriptEditor } from "@/components/recordings/TranscriptEditor";
 import { RecordingThumbnail, setThumbnail, generateThumbnailFromBlob } from "@/components/recordings/RecordingThumbnail";
+import { mergeRecordings } from "@/lib/recordings/mergeChunks";
+import { setPendingSource } from "@/lib/session/pendingSource";
 
 
 
