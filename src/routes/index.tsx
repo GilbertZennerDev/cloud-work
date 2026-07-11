@@ -2355,6 +2355,7 @@ function Dashboard() {
         defaultY={subY}
         fontSize={fontSize}
         outline={subOutline}
+        videoWidth={sourceDims?.width}
         lockAxis={lockAxis}
         onLockAxisChange={setLockAxis}
         onChange={(patch) => { if (editorCueIdx !== null) updateCuePos(editorCueIdx, patch); }}
