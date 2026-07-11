@@ -892,6 +892,43 @@ function Dashboard() {
     });
   }, []);
 
+  const burnClipWithCurrentSettings = useCallback(async (
+    video: Blob,
+    burnCues: SrtCue[],
+    label: string,
+    onProgress: (n: number) => void,
+  ): Promise<Blob> => {
+    const visibleCues = burnCues.filter((c) => c.end > c.start && c.text.trim().length > 0);
+    if (visibleCues.length === 0) throw new Error("No visible subtitle cues to burn");
+    const dims = await getVideoDimensions(video);
+    const first = visibleCues[0];
+    appendLog(
+      `[BURN] ${label}: ${visibleCues.length} cues, video ${dims.width}×${dims.height}, first ${formatSeconds(first.start)}–${formatSeconds(first.end)}`,
+    );
+    appendLog(
+      fontFamily
+        ? `[BURN] Font row ${fontOverride ? `found: ${fontOverride.family} (.${fontOverride.format})` : `missing for "${fontFamily}"; burn will use built-in fallback`}`
+        : "[BURN] Font row: built-in Noto Sans",
+    );
+    const ass = cuesToAss(visibleCues, {
+      fontSize,
+      outline: subOutline,
+      xPct: subX,
+      yPct: subY,
+      videoWidth: dims.width,
+      videoHeight: dims.height,
+      fontFamily,
+    });
+    const subbed = await burnSubtitles(
+      video,
+      ass,
+      onProgress,
+      { lowPerf: effLowPerf, maxHeight: effMaxHeight },
+      fontOverride,
+    );
+    return new Blob([subbed as BlobPart], { type: "video/mp4" });
+  }, [appendLog, effLowPerf, effMaxHeight, fontFamily, fontOverride, fontSize, subOutline, subX, subY]);
+
   // Attach ffmpeg log listener once
   useMemo(() => {
     onFfmpegLog((m) => appendLog(m));
