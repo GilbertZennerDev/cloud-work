@@ -378,6 +378,178 @@ async function ensureFont(
   return { fallback, override: custom };
 }
 
+function uniqueStrings(values: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const cleaned = value?.replace(/\s+/g, " ").trim();
+    if (!cleaned || seen.has(cleaned)) continue;
+    seen.add(cleaned);
+    out.push(cleaned);
+  }
+  return out;
+}
+
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+async function fontNameCandidates(fontBytes: Uint8Array | undefined, fallbackFamily: string): Promise<string[]> {
+  if (!fontBytes) return [sanitizeAssFontFamily(fallbackFamily)];
+  try {
+    const opentype = await import("opentype.js");
+    const font = opentype.parse(toArrayBuffer(fontBytes));
+    const names = font.names as unknown as Record<string, Record<string, string> | undefined>;
+    const pick = (key: string) => {
+      const entry = names[key];
+      if (!entry) return null;
+      return entry.en || Object.values(entry)[0] || null;
+    };
+    const preferredFamily = pick("preferredFamily");
+    const fontFamily = pick("fontFamily");
+    const fullName = pick("fullName");
+    const postScriptName = pick("postScriptName");
+    const preferredSubfamily = pick("preferredSubfamily");
+    const fontSubfamily = pick("fontSubfamily");
+    const familyWithPreferredStyle = preferredFamily && preferredSubfamily && !/^(regular|normal)$/i.test(preferredSubfamily)
+      ? `${preferredFamily} ${preferredSubfamily}`
+      : null;
+    const familyWithStyle = fontFamily && fontSubfamily && !/^(regular|normal)$/i.test(fontSubfamily)
+      ? `${fontFamily} ${fontSubfamily}`
+      : null;
+
+    // Uploaded OTFs commonly match in ffmpeg by internal Full/PostScript names
+    // (for example "Whitney-Book") rather than the CSS display family.
+    const candidates = uniqueStrings([
+      fullName,
+      postScriptName,
+      familyWithPreferredStyle,
+      familyWithStyle,
+      preferredFamily,
+      fontFamily,
+      fallbackFamily,
+    ]).map(sanitizeAssFontFamily);
+    return candidates.length > 0 ? candidates : [sanitizeAssFontFamily(fallbackFamily)];
+  } catch {
+    return [sanitizeAssFontFamily(fallbackFamily)];
+  }
+}
+
+interface DrawtextCue {
+  start: number;
+  end: number;
+  text: string;
+  xPct: number;
+  yPct: number;
+}
+
+interface DrawtextAssData {
+  width: number;
+  height: number;
+  fontSize: number;
+  outline: number;
+  cues: DrawtextCue[];
+}
+
+function parseAssClock(value: string): number {
+  const m = value.trim().match(/^(\d+):(\d{2}):(\d{2})\.(\d{1,2})$/);
+  if (!m) return 0;
+  return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) + Number(m[4].padEnd(2, "0")) / 100;
+}
+
+function unescapeAssText(text: string): string {
+  return text
+    .replace(/\\N/g, "\n")
+    .replace(/\\\{/g, "{")
+    .replace(/\\\}/g, "}")
+    .replace(/\\\\/g, "\\");
+}
+
+function parseGeneratedAssForDrawtext(assText: string): DrawtextAssData | null {
+  const width = Number(assText.match(/^PlayResX:\s*(\d+)/m)?.[1] ?? 0);
+  const height = Number(assText.match(/^PlayResY:\s*(\d+)/m)?.[1] ?? 0);
+  const styleLine = assText.match(/^Style:\s*Default,(.*)$/m)?.[1];
+  if (!width || !height || !styleLine) return null;
+  const styleParts = styleLine.split(",");
+  const fontSize = Math.max(1, Number(styleParts[2] ?? 28));
+  const outline = Math.max(0, Number(styleParts[16] ?? 2));
+  const cues: DrawtextCue[] = [];
+
+  for (const line of assText.split(/\r?\n/)) {
+    if (!line.startsWith("Dialogue:")) continue;
+    const payload = line.slice("Dialogue:".length).trimStart();
+    let cursor = 0;
+    const fields: string[] = [];
+    for (let i = 0; i < 9; i++) {
+      const next = payload.indexOf(",", cursor);
+      if (next === -1) break;
+      fields.push(payload.slice(cursor, next));
+      cursor = next + 1;
+    }
+    if (fields.length !== 9) continue;
+    const rawText = payload.slice(cursor);
+    const pos = rawText.match(/^\{\\pos\(([-\d.]+),([-\d.]+)\)\}(.*)$/s);
+    if (!pos) continue;
+    const start = parseAssClock(fields[1]);
+    const end = parseAssClock(fields[2]);
+    if (end <= start) continue;
+    cues.push({
+      start,
+      end,
+      xPct: Math.max(0, Math.min(100, (Number(pos[1]) / width) * 100)),
+      yPct: Math.max(0, Math.min(100, (Number(pos[2]) / height) * 100)),
+      text: unescapeAssText(pos[3]),
+    });
+  }
+
+  return cues.length > 0 ? { width, height, fontSize, outline, cues } : null;
+}
+
+function escapeDrawtextValue(value: string): string {
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/:/g, "\\:")
+    .replace(/,/g, "\\,")
+    .replace(/%/g, "\\%")
+    .replace(/\r?\n/g, "\\n");
+}
+
+function drawtextFilter(fontPath: string, cue: DrawtextCue, fontSize: number, outline: number): string {
+  const x = (cue.xPct / 100).toFixed(5);
+  const y = (cue.yPct / 100).toFixed(5);
+  return [
+    "drawtext",
+    `fontfile='${escapeFilterOption(fontPath)}'`,
+    `text='${escapeDrawtextValue(cue.text)}'`,
+    `x='(w*${x})-(text_w/2)'`,
+    `y='(h*${y})-(text_h/2)'`,
+    `fontsize=${Math.max(1, Math.round(fontSize))}`,
+    "fontcolor=white",
+    "bordercolor=black",
+    `borderw=${Math.max(0, Math.round(outline))}`,
+    "line_spacing=2",
+    "fix_bounds=1",
+    `enable='between(t,${cue.start.toFixed(3)},${cue.end.toFixed(3)})'`,
+  ].join(":");
+}
+
+function directFontDrawtextChain(assText: string, fontPath: string, perf: PerfOptions): string | null {
+  const parsed = parseGeneratedAssForDrawtext(assText);
+  if (!parsed) return null;
+  const sf = scaleFilter(perf);
+  return [
+    "setpts=PTS-STARTPTS",
+    sf,
+    ...parsed.cues.map((cue) => drawtextFilter(fontPath, cue, parsed.fontSize, parsed.outline)),
+  ].filter(Boolean).join(",");
+}
+
+function replaceAssFontFamily(assText: string, family: string): string {
+  const safeFamily = sanitizeAssFontFamily(family);
+  return assText.replace(/^Style:\s*Default,([^,]*),(.*)$/m, `Style: Default,${safeFamily},$2`);
+}
+
 
 export interface SubtitleStyle {
   /** Font size in pixels (relative to source video height in ASS PlayRes) */
