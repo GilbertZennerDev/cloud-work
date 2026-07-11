@@ -97,6 +97,20 @@ function scaleFilter(perf: PerfOptions): string | null {
   return `scale='min(iw,trunc(oh*a/2)*2)':'min(${h},ih)':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2`;
 }
 
+function escapeFilterOption(value: string): string {
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/:/g, "\\:")
+    .replace(/,/g, "\\,");
+}
+
+function subtitleFilter(subsName: string, fontFamily: string): string {
+  const filename = escapeFilterOption(subsName);
+  const family = escapeFilterOption(fontFamily.trim() || DEFAULT_FONT_FAMILY);
+  return `subtitles=filename='${filename}':fontsdir='/fonts':force_style='FontName=${family}'`;
+}
+
 /** Fast remux of an MPEG-TS blob into an MP4 container (no re-encode). */
 export async function remuxTsToMp4(
   file: File | Blob,
