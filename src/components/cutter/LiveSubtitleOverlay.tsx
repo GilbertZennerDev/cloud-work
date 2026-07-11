@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { LockKeyhole } from "lucide-react";
 import type { SrtCue } from "@/lib/subtitles/luxasrToSrt";
+import type { LockAxis } from "./CuePreview";
 
 interface Props {
   src: string;
@@ -9,8 +11,12 @@ interface Props {
   outline: number;  // px
   cues?: SrtCue[];
   defaultSample?: string;
+  /** Global default-position setter (used when no cue is active). */
   onChange: (x: number, y: number) => void;
+  /** Per-cue override setter. When a cue is active, dragging updates that cue. */
+  onCueChange?: (cueIndex: number, patch: { xPct?: number; yPct?: number }) => void;
   onTimeUpdate?: (t: number) => void;
+  lockAxis?: LockAxis;
   /** Optional external ref for parent-controlled seeking. */
   videoRef?: React.RefObject<HTMLVideoElement | null>;
 }
