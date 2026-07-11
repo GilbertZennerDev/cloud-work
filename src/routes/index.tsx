@@ -524,6 +524,124 @@ function Dashboard() {
       return next;
     });
 
+  // ----- Auto-save & restore ----------------------------------------------
+  // Build a stable key for the current source so multiple in-flight projects
+  // don't overwrite each other. Recordings are keyed by id; local files by
+  // (name, size, lastModified) so re-picking the same file restores its work.
+  const sessionKey = useMemo(() => {
+    if (recordingId) return makeRecordingKey(recordingId);
+    if (file) return makeFileKey({ name: file.name, size: file.size, lastModified: file.lastModified });
+    return null;
+  }, [recordingId, file]);
+
+  const [restoreBanner, setRestoreBanner] = useState<{ savedAt: number; fileName?: string } | null>(null);
+  const restoredKeyRef = useRef<string | null>(null);
+
+  // On session-key change, look for a saved snapshot and offer to restore.
+  useEffect(() => {
+    if (!sessionKey) return;
+    if (restoredKeyRef.current === sessionKey) return;
+    let cancelled = false;
+    loadCutterSession(sessionKey).then((saved) => {
+      if (cancelled || !saved) return;
+      if (restoredKeyRef.current === sessionKey) return;
+      // Recording-backed sessions restore silently (transcript is already
+      // reloaded from the server; we just want the user's edits back).
+      if (sessionKey.startsWith("rec:")) {
+        applySavedSession(saved);
+        restoredKeyRef.current = sessionKey;
+      } else {
+        // Local files: show a banner so the user opts in explicitly.
+        setRestoreBanner({ savedAt: saved.savedAt, fileName: saved.fileName });
+      }
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionKey]);
+
+  const applySavedSession = (saved: Awaited<ReturnType<typeof loadCutterSession>>) => {
+    if (!saved) return;
+    if (saved.rawCues?.length) setRawCues(saved.rawCues);
+    if (saved.cues?.length) {
+      setCues(saved.cues);
+      setSrtText(cuesToSrt(saved.cues));
+    }
+    setSelectedCues(new Set(saved.selectedCues ?? []));
+    setMode(saved.mode);
+    if (saved.segments?.length) setSegments(saved.segments);
+    setSubX(saved.subX);
+    setSubY(saved.subY);
+    setFontSize(saved.fontSize);
+    setSubOutline(saved.subOutline);
+    setMaxSentences(saved.maxSentences);
+    setMaxChars(saved.maxChars);
+    setAudioOffsetSec(saved.audioOffsetSec);
+    setBurnIn(saved.burnIn);
+  };
+
+  const acceptRestore = async () => {
+    if (!sessionKey) return;
+    const saved = await loadCutterSession(sessionKey);
+    applySavedSession(saved);
+    restoredKeyRef.current = sessionKey;
+    setRestoreBanner(null);
+    toast.success("Previous session restored");
+  };
+
+  const discardRestore = async () => {
+    if (sessionKey) await clearCutterSession(sessionKey);
+    restoredKeyRef.current = sessionKey;
+    setRestoreBanner(null);
+  };
+
+  // Debounced auto-save on any meaningful state change.
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!sessionKey || !file) return;
+    // Nothing to persist for a brand-new session.
+    if (rawCues.length === 0 && cues.length === 0 && selectedCues.size === 0) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveCutterSession(sessionKey, {
+        fileName: file.name,
+        fileSize: file.size,
+        rawCues,
+        cues,
+        selectedCues: Array.from(selectedCues),
+        mode,
+        segments,
+        subX,
+        subY,
+        fontSize,
+        subOutline,
+        maxSentences,
+        maxChars,
+        audioOffsetSec,
+        burnIn,
+      }).catch(() => {});
+    }, 800);
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [
+    sessionKey, file, rawCues, cues, selectedCues, mode, segments,
+    subX, subY, fontSize, subOutline, maxSentences, maxChars, audioOffsetSec, burnIn,
+  ]);
+
+  const resetSession = async () => {
+    if (sessionKey) await clearCutterSession(sessionKey);
+    setRawCues([]);
+    setCues([]);
+    setSrtText(null);
+    setSelectedCues(new Set());
+    setSegments([{ start: "00:00", end: "00:30" }]);
+    setSubX(50); setSubY(88); setFontSize(28); setSubOutline(2);
+    setMaxSentences(2); setMaxChars(90); setAudioOffsetSec(0);
+    setMode("full");
+    toast.success("Session reset");
+  };
+
+
   const logRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const cancelledRef = useRef(false);
