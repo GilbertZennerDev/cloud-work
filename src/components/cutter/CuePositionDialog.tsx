@@ -18,6 +18,7 @@ interface Props {
   defaultY: number;
   fontSize: number;
   outline: number;
+  videoWidth?: number;
   lockAxis: LockAxis;
   onLockAxisChange: (v: LockAxis) => void;
   onChange: (patch: { xPct?: number; yPct?: number }) => void;
