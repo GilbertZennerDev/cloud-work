@@ -30,7 +30,8 @@ interface Props {
  * repositionable by drag or slider.
  */
 export function LiveSubtitleOverlay({
-  src, xPct, yPct, fontSize, outline, cues, defaultSample = "Beispill Ennertitlen", onChange, onTimeUpdate, videoRef,
+  src, xPct, yPct, fontSize, outline, cues, defaultSample = "Beispill Ennertitlen",
+  onChange, onCueChange, onTimeUpdate, lockAxis = "free", videoRef,
 }: Props) {
   const internalVideoRef = useRef<HTMLVideoElement>(null);
   const videoElRef = videoRef ?? internalVideoRef;
@@ -50,19 +51,31 @@ export function LiveSubtitleOverlay({
     return () => ro.disconnect();
   }, []);
 
+  // Pick the cue that covers the current time. We compute this here so the
+  // drag handler can route to per-cue vs global setters.
+  const activeCue = cues?.find((c) => currentTime >= c.start && currentTime <= c.end);
+
   const updateFromEvent = useCallback(
     (clientX: number, clientY: number) => {
       const box = boxRef.current;
       if (!box) return;
       const r = box.getBoundingClientRect();
-      const x = ((clientX - r.left) / r.width) * 100;
-      const y = ((clientY - r.top) / r.height) * 100;
-      onChange(
-        Math.round(Math.max(0, Math.min(100, x))),
-        Math.round(Math.max(0, Math.min(100, y))),
-      );
+      const x = Math.round(Math.max(0, Math.min(100, ((clientX - r.left) / r.width) * 100)));
+      const y = Math.round(Math.max(0, Math.min(100, ((clientY - r.top) / r.height) * 100)));
+      // If a cue is active AND the parent gave us a per-cue setter, edit the cue.
+      if (activeCue && onCueChange) {
+        const patch: { xPct?: number; yPct?: number } = {};
+        if (lockAxis !== "y") patch.xPct = x;
+        if (lockAxis !== "x") patch.yPct = y;
+        if (patch.xPct !== undefined || patch.yPct !== undefined) onCueChange(activeCue.index, patch);
+        return;
+      }
+      // Otherwise edit the global default (respect lock by reusing current values).
+      const nx = lockAxis === "y" ? xPct : x;
+      const ny = lockAxis === "x" ? yPct : y;
+      onChange(nx, ny);
     },
-    [onChange],
+    [activeCue, onCueChange, onChange, lockAxis, xPct, yPct],
   );
 
   const onPointerDown = (e: React.PointerEvent) => {
