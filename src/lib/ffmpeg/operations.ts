@@ -313,23 +313,40 @@ export async function extractAudioMp3(
 
 const FONT_URL =
   "https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSans/hinted/ttf/NotoSans-Regular.ttf";
-const FONT_FAMILY = "Noto Sans";
-// Track font install per ffmpeg instance. A cancel/reload creates a new
-// FFmpeg with a fresh virtual filesystem, so a module-level boolean would
-// falsely report the font as loaded and libass would silently render
-// nothing — subtitles disappear from the burned output.
-const fontLoadedFor = new WeakSet<object>();
+const DEFAULT_FONT_FAMILY = "Noto Sans";
+// Track which font families have been installed on which ffmpeg instance.
+// A cancel/reload creates a new FFmpeg with a fresh virtual filesystem, and
+// the user may switch fonts mid-session — a Map per instance lets us install
+// on demand without re-writing the same file every call.
+const fontsInstalled = new WeakMap<object, Set<string>>();
 
-async function ensureFont(ffmpeg: Awaited<ReturnType<typeof getFFmpeg>>) {
-  if (fontLoadedFor.has(ffmpeg)) return;
+/**
+ * Fetch a font file into ffmpeg's /fonts dir. Idempotent per instance/family.
+ * When no override is given, falls back to the bundled Noto Sans.
+ */
+async function ensureFont(
+  ffmpeg: Awaited<ReturnType<typeof getFFmpeg>>,
+  override?: { family: string; url: string; format: string },
+) {
+  const family = override?.family ?? DEFAULT_FONT_FAMILY;
+  const url = override?.url ?? FONT_URL;
+  const format = override?.format ?? "ttf";
+  let installed = fontsInstalled.get(ffmpeg);
+  if (!installed) {
+    installed = new Set();
+    fontsInstalled.set(ffmpeg, installed);
+  }
+  if (installed.has(family)) return;
   try {
     await ffmpeg.createDir("/fonts");
   } catch {
     // already exists
   }
-  const bytes = await fetchFile(FONT_URL);
-  await ffmpeg.writeFile("/fonts/NotoSans-Regular.ttf", bytes);
-  fontLoadedFor.add(ffmpeg);
+  const bytes = await fetchFile(url);
+  // libass reads by file extension; sanitize family for filesystem use.
+  const safeName = family.replace(/[^a-zA-Z0-9-]+/g, "_");
+  await ffmpeg.writeFile(`/fonts/${safeName}.${format}`, bytes);
+  installed.add(family);
 }
 
 export interface SubtitleStyle {
@@ -345,6 +362,8 @@ export interface SubtitleStyle {
   videoWidth: number;
   /** Video height in pixels (used as ASS PlayResY). */
   videoHeight: number;
+  /** Optional font family override (must match a value installed via ensureFont). */
+  fontFamily?: string | null;
 }
 
 function assTime(seconds: number): string {
