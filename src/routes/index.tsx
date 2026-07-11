@@ -892,6 +892,37 @@ function Dashboard() {
     });
   }, []);
 
+  // Track source dimensions so per-cue previews and burn ASS PlayRes use the
+  // same basis. This also provides a fallback when a freshly-created MP4 Blob
+  // is valid but the browser metadata event fails or races.
+  const [sourceDims, setSourceDims] = useState<{ width: number; height: number } | null>(null);
+  useEffect(() => {
+    const src = sourcePreviewBlob ?? file;
+    if (!src) { setSourceDims(null); return; }
+    let cancelled = false;
+    getVideoDimensions(src)
+      .then((d) => { if (!cancelled) setSourceDims(d); })
+      .catch(() => { if (!cancelled) setSourceDims(null); });
+    return () => { cancelled = true; };
+  }, [file, sourcePreviewBlob]);
+
+  const readVideoDuration = useCallback((video: Blob): Promise<number | null> => {
+    return new Promise((resolve) => {
+      const url = URL.createObjectURL(video);
+      const v = document.createElement("video");
+      const done = (value: number | null) => {
+        clearTimeout(timer);
+        URL.revokeObjectURL(url);
+        resolve(value && isFinite(value) && value > 0 ? value : null);
+      };
+      const timer = window.setTimeout(() => done(null), 3500);
+      v.preload = "metadata";
+      v.onloadedmetadata = () => done(v.duration);
+      v.onerror = () => done(null);
+      v.src = url;
+    });
+  }, []);
+
   const burnClipWithCurrentSettings = useCallback(async (
     video: Blob,
     burnCues: SrtCue[],
@@ -900,10 +931,22 @@ function Dashboard() {
   ): Promise<Blob> => {
     const visibleCues = burnCues.filter((c) => c.end > c.start && c.text.trim().length > 0);
     if (visibleCues.length === 0) throw new Error("No visible subtitle cues to burn");
-    const dims = await getVideoDimensions(video);
+    let dims: { width: number; height: number };
+    try {
+      dims = await getVideoDimensions(video);
+    } catch (err) {
+      dims = sourceDims ?? { width: 1280, height: 720 };
+      appendLog(`[BURN] Browser metadata unavailable (${(err as Error).message}); using ${dims.width}×${dims.height} burn dimensions`);
+    }
+    const duration = await readVideoDuration(video);
     const first = visibleCues[0];
+    if (duration !== null && first.start >= Math.max(0.05, duration - 0.02)) {
+      throw new Error(
+        `Subtitle burn-in aborted: first cue starts at ${formatSeconds(first.start)}, outside the ${formatSeconds(duration)} clip`,
+      );
+    }
     appendLog(
-      `[BURN] ${label}: ${visibleCues.length} cues, video ${dims.width}×${dims.height}, first ${formatSeconds(first.start)}–${formatSeconds(first.end)}`,
+      `[BURN] ${label}: ${visibleCues.length} cues, video ${dims.width}×${dims.height}${duration !== null ? `, duration ${formatSeconds(duration)}` : ""}, first ${formatSeconds(first.start)}–${formatSeconds(first.end)}`,
     );
     appendLog(
       fontFamily
@@ -927,7 +970,7 @@ function Dashboard() {
       fontOverride,
     );
     return new Blob([subbed as BlobPart], { type: "video/mp4" });
-  }, [appendLog, effLowPerf, effMaxHeight, fontFamily, fontOverride, fontSize, subOutline, subX, subY]);
+  }, [appendLog, effLowPerf, effMaxHeight, fontFamily, fontOverride, fontSize, readVideoDuration, sourceDims, subOutline, subX, subY]);
 
   // Attach ffmpeg log listener once
   useMemo(() => {
