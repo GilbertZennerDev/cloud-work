@@ -321,33 +321,38 @@ const DEFAULT_FONT_FAMILY = "Noto Sans";
 const fontsInstalled = new WeakMap<object, Set<string>>();
 
 /**
- * Fetch a font file into ffmpeg's /fonts dir. Idempotent per instance/family.
- * When no override is given, falls back to the bundled Noto Sans.
+ * Fetch font files into ffmpeg's /fonts dir. Idempotent per instance/family.
+ * Always installs the Noto Sans fallback so libass has a guaranteed usable
+ * face even when a custom override can't be matched by internal family name.
  */
 async function ensureFont(
   ffmpeg: Awaited<ReturnType<typeof getFFmpeg>>,
   override?: { family: string; url: string; format: string },
 ) {
-  const family = override?.family ?? DEFAULT_FONT_FAMILY;
-  const url = override?.url ?? FONT_URL;
-  const format = override?.format ?? "ttf";
   let installed = fontsInstalled.get(ffmpeg);
   if (!installed) {
     installed = new Set();
     fontsInstalled.set(ffmpeg, installed);
   }
-  if (installed.has(family)) return;
   try {
     await ffmpeg.createDir("/fonts");
   } catch {
     // already exists
   }
-  const bytes = await fetchFile(url);
-  // libass reads by file extension; sanitize family for filesystem use.
-  const safeName = family.replace(/[^a-zA-Z0-9-]+/g, "_");
-  await ffmpeg.writeFile(`/fonts/${safeName}.${format}`, bytes);
-  installed.add(family);
+  const writeOne = async (family: string, url: string, format: string, path: string) => {
+    if (installed!.has(family)) return;
+    const bytes = await fetchFile(url);
+    await ffmpeg.writeFile(path, bytes);
+    installed!.add(family);
+  };
+  // Always install Noto Sans as the guaranteed fallback face.
+  await writeOne(DEFAULT_FONT_FAMILY, FONT_URL, "ttf", "/fonts/NotoSans-Regular.ttf");
+  if (override) {
+    const safeName = override.family.replace(/[^a-zA-Z0-9-]+/g, "_");
+    await writeOne(override.family, override.url, override.format, `/fonts/${safeName}.${override.format}`);
+  }
 }
+
 
 export interface SubtitleStyle {
   /** Font size in pixels (relative to source video height in ASS PlayRes) */
