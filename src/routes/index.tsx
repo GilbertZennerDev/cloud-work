@@ -1727,6 +1727,7 @@ function Dashboard() {
                                     fontSize={fontSize}
                                     outline={subOutline}
                                     text={c.text}
+                                    videoWidth={sourceDims?.width}
                                     lockAxis={lockAxis}
                                     onChange={(patch) => updateCuePos(c.index, patch)}
                                   />
