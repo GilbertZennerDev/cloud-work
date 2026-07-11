@@ -366,6 +366,59 @@ function escapeAssText(text: string): string {
 
 export interface AssCue { start: number; end: number; text: string; xPct?: number; yPct?: number }
 
+// Cache one measuring context per font-size so we don't recreate it per cue.
+let wrapCanvas: HTMLCanvasElement | null = null;
+let wrapCtx: CanvasRenderingContext2D | null = null;
+function getWrapCtx(fontSize: number): CanvasRenderingContext2D | null {
+  if (typeof document === "undefined") return null;
+  if (!wrapCanvas) {
+    wrapCanvas = document.createElement("canvas");
+    wrapCtx = wrapCanvas.getContext("2d");
+  }
+  if (!wrapCtx) return null;
+  // Match burn font (Noto Sans, Bold=1) and preview (`font-semibold`).
+  wrapCtx.font = `bold ${fontSize}px "Noto Sans", system-ui, sans-serif`;
+  return wrapCtx;
+}
+
+/**
+ * Greedy word-wrap that mirrors the preview's `max-width: 92%` behaviour so
+ * the burned output breaks at the same points. Preserves any hard \n the
+ * user typed. Falls back to a char-count heuristic outside the browser
+ * (worker/SSR) so results stay deterministic.
+ */
+function wrapTextForAss(text: string, fontSize: number, maxWidthPx: number): string {
+  const ctx = getWrapCtx(fontSize);
+  const fallbackCharsPerLine = Math.max(6, Math.floor(maxWidthPx / (fontSize * 0.55)));
+
+  const wrapLine = (line: string): string => {
+    const trimmed = line.trim();
+    if (!trimmed) return "";
+    const words = trimmed.split(/\s+/);
+    const out: string[] = [];
+    let current = "";
+    for (const word of words) {
+      const candidate = current ? `${current} ${word}` : word;
+      const width = ctx ? ctx.measureText(candidate).width : candidate.length * fontSize * 0.55;
+      const fits = ctx ? width <= maxWidthPx : candidate.length <= fallbackCharsPerLine;
+      if (fits || !current) {
+        current = candidate;
+      } else {
+        out.push(current);
+        current = word;
+      }
+    }
+    if (current) out.push(current);
+    return out.join("\n");
+  };
+
+  return text
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map(wrapLine)
+    .join("\n");
+}
+
 export function cuesToAss(cues: AssCue[], style: SubtitleStyle): string {
   const w = Math.max(1, Math.round(style.videoWidth));
   const h = Math.max(1, Math.round(style.videoHeight));
