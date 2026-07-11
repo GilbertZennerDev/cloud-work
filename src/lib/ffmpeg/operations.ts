@@ -422,9 +422,9 @@ async function fontNameCandidates(fontBytes: Uint8Array | undefined, fallbackFam
   try {
     const opentype = await import("opentype.js");
     const font = opentype.parse(toArrayBuffer(fontBytes));
-    const names = font.names as unknown as Record<string, Record<string, string> | undefined>;
+    const nameTable = font.names as unknown as Record<string, Record<string, string> | undefined>;
     const pick = (key: string) => {
-      const entry = names[key];
+      const entry = nameTable[key];
       if (!entry) return null;
       return entry.en || Object.values(entry)[0] || null;
     };
@@ -440,10 +440,12 @@ async function fontNameCandidates(fontBytes: Uint8Array | undefined, fallbackFam
     const familyWithStyle = fontFamily && fontSubfamily && !/^(regular|normal)$/i.test(fontSubfamily)
       ? `${fontFamily} ${fontSubfamily}`
       : null;
+    const styleName = [preferredSubfamily, fontSubfamily, fullName, postScriptName].filter(Boolean).join(" ");
+    const prefersBold = /\b(bold|semibold|semi bold|demi|black|heavy|extrabold|extra bold)\b/i.test(styleName);
 
     // Uploaded OTFs commonly match in ffmpeg by internal Full/PostScript names
     // (for example "Whitney-Book") rather than the CSS display family.
-    const names = uniqueStrings([
+    const fontNames = uniqueStrings([
       fallbackFamily,
       fullName,
       postScriptName,
@@ -458,8 +460,8 @@ async function fontNameCandidates(fontBytes: Uint8Array | undefined, fallbackFam
       // match a regular/book OTF when ASS asks for Bold=1. Prefer normal
       // weight for uploaded files, then try bold only if the font resolver says
       // that is what the file wants.
-      ...names.map((family) => ({ family, bold: false, source: "uploaded" as const })),
-      ...names.map((family) => ({ family, bold: true, source: "uploaded" as const })),
+      ...fontNames.map((family) => ({ family, bold: prefersBold, source: "uploaded" as const })),
+      ...fontNames.map((family) => ({ family, bold: !prefersBold, source: "uploaded" as const })),
     ]);
     return candidates.length > 0 ? candidates : [{ family: fallback, bold: false, source: "fallback" }];
   } catch {
@@ -586,6 +588,90 @@ function replaceAssStyleFont(assText: string, candidate: FontCandidate): string 
     parts[7] = candidate.bold ? "1" : "0";
     return `Style: ${parts.join(",")}`;
   });
+}
+
+function fallbackFontCandidates(): FontCandidate[] {
+  return [
+    { family: DEFAULT_FONT_FAMILY, bold: true, source: "fallback" },
+    { family: DEFAULT_FONT_FAMILY, bold: false, source: "fallback" },
+  ];
+}
+
+function probeAss(candidate: FontCandidate): string {
+  const style = `Style: Default,${sanitizeAssFontFamily(candidate.family)},28,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,${candidate.bold ? 1 : 0},0,0,0,100,100,0,0,1,3,0,5,0,0,0,1`;
+  return [
+    "[Script Info]",
+    "ScriptType: v4.00+",
+    "WrapStyle: 2",
+    "ScaledBorderAndShadow: yes",
+    "PlayResX: 320",
+    "PlayResY: 180",
+    "",
+    "[V4+ Styles]",
+    "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+    style,
+    "",
+    "[Events]",
+    "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    "Dialogue: 0,0:00:00.00,0:00:00.10,Default,,0,0,0,,{\\pos(160,90)}font probe",
+    "",
+  ].join("\n");
+}
+
+function filenameFromPath(path: string): string {
+  return path.split("/").pop() ?? path;
+}
+
+function fontSelectLogs(logs: string[]): string[] {
+  return logs.filter((line) => /fontselect|font selection|select.*font/i.test(line));
+}
+
+function logsMatchFontCandidate(
+  logs: string[],
+  candidate: FontCandidate,
+  override: InstalledFontFile | undefined,
+): boolean {
+  const lines = fontSelectLogs(logs);
+  if (candidate.source === "fallback" || !override) {
+    return lines.length === 0 || lines.some((line) => /NotoSans|Noto Sans/i.test(line));
+  }
+
+  const customFile = filenameFromPath(override.path).toLowerCase();
+  const customStem = customFile.replace(/\.[^.]+$/, "");
+  return lines.some((line) => {
+    const lower = line.toLowerCase();
+    if (lower.includes("notosans") || lower.includes("noto sans")) return false;
+    return lower.includes(customFile) || lower.includes(customStem) || /->\s*\/fonts\//i.test(line);
+  });
+}
+
+async function probeFontCandidate(
+  ffmpeg: Awaited<ReturnType<typeof getFFmpeg>>,
+  inputName: string,
+  probeName: string,
+  candidate: FontCandidate,
+  burnLogs: string[],
+  override: InstalledFontFile | undefined,
+): Promise<boolean> {
+  try { await ffmpeg.deleteFile(probeName); } catch {}
+  await ffmpeg.writeFile(probeName, new TextEncoder().encode(probeAss(candidate)));
+  const startLog = burnLogs.length;
+  try {
+    await ffmpeg.exec([
+      "-i", inputName,
+      "-t", "0.10",
+      "-vf", subtitleFilter(probeName, candidate),
+      "-an",
+      "-f", "null",
+      "-",
+    ]);
+  } catch {
+    try { await ffmpeg.deleteFile(probeName); } catch {}
+    return false;
+  }
+  const logs = burnLogs.slice(startLog);
+  try { await ffmpeg.deleteFile(probeName); } catch {}
+  return logsMatchFontCandidate(logs, candidate, override);
 }
 
 
