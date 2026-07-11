@@ -357,6 +357,37 @@ function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search.recording]);
 
+  // If ?pending=<id> is present, hydrate from the in-memory hand-off store
+  // (used by Recordings' "Merge & Cut" bulk action).
+  const handledPendingRef = useRef<string | null>(null);
+  useEffect(() => {
+    const id = search.pending;
+    if (!id) return;
+    if (handledPendingRef.current === id) return;
+    handledPendingRef.current = id;
+    const payload = takePendingSource(id);
+    if (!payload) return;
+    setFile(payload.file);
+    setSourceTitle(payload.title);
+    setRecordingId(null);
+    setRawCues(payload.cues ?? []);
+    setSelectedCues(new Set());
+    if (payload.cues && payload.cues.length > 0) {
+      const shortened = shortenCues(payload.cues, { maxSentences, maxChars });
+      setCues(shortened);
+      setSrtText(cuesToSrt(shortened));
+      toast.success(`Loaded merged clip · ${shortened.length} blocks`);
+    } else {
+      setCues([]);
+      setSrtText(null);
+      toast.success(`Loaded merged clip · ${(payload.file.size / 1024 / 1024).toFixed(1)} MB`);
+    }
+    // Drop the pending id from the URL so a refresh doesn't try to re-hydrate.
+    navigate({ to: "/", search: {}, replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search.pending]);
+
+
   const runSnapshot = useCallback(async () => {
     if (snapshotBusy || !snapshotUrl) return;
     setSnapshotBusy(true);
