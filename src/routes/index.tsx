@@ -1905,6 +1905,7 @@ function Dashboard() {
                     cues={cues.length > 0 ? cues : undefined}
                     lockAxis={lockAxis}
                     videoWidth={sourceDims?.width}
+                    fontFamily={fontFamily}
                     onChange={(x, y) => {
                       setSubX(x);
                       setSubY(y);
