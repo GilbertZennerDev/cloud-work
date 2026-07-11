@@ -1113,8 +1113,9 @@ function Dashboard() {
           yPct: subY,
           videoWidth: dims.width,
           videoHeight: dims.height,
+          fontFamily,
         });
-        const subbed = await burnSubtitles(workingVideo, ass, setProgress, { lowPerf: effLowPerf, maxHeight: effMaxHeight });
+        const subbed = await burnSubtitles(workingVideo, ass, setProgress, { lowPerf: effLowPerf, maxHeight: effMaxHeight }, fontOverride);
         checkCancel();
         setSubbedBlob(new Blob([subbed as BlobPart], { type: "video/mp4" }));
         setProgress(1);
