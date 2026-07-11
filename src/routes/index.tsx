@@ -643,6 +643,7 @@ function Dashboard() {
     setMaxChars(saved.maxChars);
     setAudioOffsetSec(saved.audioOffsetSec);
     setBurnIn(saved.burnIn);
+    if (saved.lockAxis) setLockAxis(saved.lockAxis);
   };
 
   const acceptRestore = async () => {
