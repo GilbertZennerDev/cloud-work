@@ -524,6 +524,8 @@ function Dashboard() {
   const [audioOffsetSec, setAudioOffsetSec] = useState(0);
   const [syncOpen, setSyncOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [lockAxis, setLockAxis] = useState<"free" | "x" | "y">("free");
+  const [editorCueIdx, setEditorCueIdx] = useState<number | null>(null);
 
   const perfState = usePerfTier();
   const perf = perfState.profile;
