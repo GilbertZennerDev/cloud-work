@@ -378,12 +378,18 @@ export function cuesToAss(cues: AssCue[], style: SubtitleStyle): string {
     `Style: Default,${FONT_FAMILY},${style.fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H64000000,` +
     `1,0,0,0,100,100,0,0,1,${outline},0,5,0,0,0,1`;
 
+  // Match the preview: captions in <CuePreview>/<LiveSubtitleOverlay> wrap
+  // inside a box that's ~92% of the video width. libass with WrapStyle=2
+  // never auto-wraps, so we pre-wrap here and let it honour our \N breaks.
+  const maxWidthPx = Math.round(w * 0.92);
+
   const events = cues
     .filter((c) => c.end > c.start && c.text.trim().length > 0)
     .map((c) => {
       const px = typeof c.xPct === "number" ? Math.round((c.xPct / 100) * w) : defaultX;
       const py = typeof c.yPct === "number" ? Math.round((c.yPct / 100) * h) : defaultY;
-      return `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Default,,0,0,0,,{\\pos(${px},${py})}${escapeAssText(c.text)}`;
+      const wrapped = wrapTextForAss(c.text, style.fontSize, maxWidthPx);
+      return `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Default,,0,0,0,,{\\pos(${px},${py})}${escapeAssText(wrapped)}`;
     })
     .join("\n");
 
