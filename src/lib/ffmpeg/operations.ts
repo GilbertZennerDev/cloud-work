@@ -347,8 +347,7 @@ interface InstalledFontFile {
 
 /**
  * Fetch font files into ffmpeg's /fonts dir. Idempotent per exact file.
- * Always installs the Noto Sans fallback so there is a guaranteed usable face,
- * and returns the actual uploaded font path for direct drawtext fallback.
+ * Always installs the Noto Sans fallback so there is a guaranteed usable face.
  */
 async function ensureFont(
   ffmpeg: Awaited<ReturnType<typeof getFFmpeg>>,
@@ -483,16 +482,23 @@ interface DrawtextAssData {
 
 interface BurnVisibilityProbe {
   timeSec: number;
+  referenceTimeSec: number | null;
   xPct: number;
   yPct: number;
   cropWRatio: number;
   cropHRatio: number;
+  cueStart: number;
+  cueEnd: number;
 }
 
 interface BurnVisibilityMetrics {
   meanAbsDiff: number;
   strongDiffFraction: number;
   comparedBytes: number;
+  brightPixelFraction?: number;
+  edgePixelFraction?: number;
+  sampleTimeSec?: number;
+  referenceTimeSec?: number | null;
 }
 
 class BurnVerificationError extends Error {
@@ -558,6 +564,27 @@ function parseGeneratedAssForDrawtext(assText: string): DrawtextAssData | null {
   return cues.length > 0 ? { width, height, fontSize, outline, cues } : null;
 }
 
+function timeInsideAnyCue(timeSec: number, cues: DrawtextCue[]): boolean {
+  return cues.some((cue) => timeSec >= cue.start && timeSec <= cue.end);
+}
+
+function chooseSubtitleFreeReferenceTime(cue: DrawtextCue, cues: DrawtextCue[]): number | null {
+  const beforeGap = cue.start > 0.18 ? Math.max(0, cue.start - Math.min(0.25, cue.start / 2)) : null;
+  const candidates = [
+    beforeGap,
+    cue.end + 0.18,
+    cue.start > 0.55 ? cue.start - 0.5 : null,
+    cue.end + 0.5,
+    cue.start > 1.05 ? cue.start - 1 : null,
+    cue.end + 1,
+  ];
+  for (const candidate of candidates) {
+    if (candidate === null || !isFinite(candidate) || candidate < 0) continue;
+    if (!timeInsideAnyCue(candidate, cues)) return candidate;
+  }
+  return null;
+}
+
 function firstVisibilityProbe(assText: string): BurnVisibilityProbe | null {
   const parsed = parseGeneratedAssForDrawtext(assText);
   if (!parsed) return null;
@@ -570,10 +597,13 @@ function firstVisibilityProbe(assText: string): BurnVisibilityProbe | null {
   const estimatedTextHeight = lineCount * parsed.fontSize * 1.85 + parsed.outline * 12;
   return {
     timeSec: Math.max(cue.start, Math.min(cue.end - 0.03, (cue.start + cue.end) / 2)),
+    referenceTimeSec: chooseSubtitleFreeReferenceTime(cue, parsed.cues),
     xPct: cue.xPct,
     yPct: cue.yPct,
     cropWRatio: Math.max(0.22, Math.min(0.96, estimatedTextWidth / Math.max(1, parsed.width))),
     cropHRatio: Math.max(0.12, Math.min(0.48, estimatedTextHeight / Math.max(1, parsed.height))),
+    cueStart: cue.start,
+    cueEnd: cue.end,
   };
 }
 
@@ -584,8 +614,7 @@ function probeCropFilter(probe: BurnVisibilityProbe, perf: PerfOptions, includeS
   const w = probe.cropWRatio.toFixed(5);
   const h = probe.cropHRatio.toFixed(5);
   const crop = [
-    "crop",
-    `w='max(2,trunc(iw*${w}/2)*2)'`,
+    `crop=w='max(2,trunc(iw*${w}/2)*2)'`,
     `h='max(2,trunc(ih*${h}/2)*2)'`,
     `x='min(max(0,iw*${x}-ow/2),iw-ow)'`,
     `y='min(max(0,ih*${y}-oh/2),ih-oh)'`,
@@ -602,19 +631,21 @@ async function extractProbeCrop(
   includeScale: boolean,
 ): Promise<Uint8Array> {
   try { await ffmpeg.deleteFile(rawName); } catch {}
-  await ffmpeg.exec([
-    "-ss", probe.timeSec.toFixed(3),
-    "-i", inputName,
-    "-frames:v", "1",
-    "-vf", probeCropFilter(probe, perf, includeScale),
-    "-an",
-    "-f", "rawvideo",
-    "-pix_fmt", "rgb24",
-    "-y", rawName,
-  ]);
-  const bytes = await readOutputFile(ffmpeg, rawName, "Burn verification frame");
-  try { await ffmpeg.deleteFile(rawName); } catch {}
-  return bytes;
+  try {
+    await ffmpeg.exec([
+      "-ss", probe.timeSec.toFixed(3),
+      "-i", inputName,
+      "-frames:v", "1",
+      "-vf", probeCropFilter(probe, perf, includeScale),
+      "-an",
+      "-f", "rawvideo",
+      "-pix_fmt", "rgb24",
+      "-y", rawName,
+    ]);
+    return await readOutputFile(ffmpeg, rawName, "Burn verification frame");
+  } finally {
+    try { await ffmpeg.deleteFile(rawName); } catch {}
+  }
 }
 
 function compareRawCrops(reference: Uint8Array, burned: Uint8Array): BurnVisibilityMetrics {
@@ -634,79 +665,104 @@ function compareRawCrops(reference: Uint8Array, burned: Uint8Array): BurnVisibil
   };
 }
 
+function subtitleSignal(crop: Uint8Array): Pick<BurnVisibilityMetrics, "brightPixelFraction" | "edgePixelFraction"> {
+  const pixels = Math.floor(crop.length / 3);
+  if (pixels <= 0) return { brightPixelFraction: 0, edgePixelFraction: 0 };
+  let bright = 0;
+  let edges = 0;
+  let previousLuma: number | null = null;
+  for (let i = 0; i < pixels; i++) {
+    const r = crop[i * 3] ?? 0;
+    const g = crop[i * 3 + 1] ?? 0;
+    const b = crop[i * 3 + 2] ?? 0;
+    const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    if (luma >= 205 && Math.max(r, g, b) - Math.min(r, g, b) <= 58) bright++;
+    if (previousLuma !== null && Math.abs(luma - previousLuma) >= 76) edges++;
+    previousLuma = luma;
+  }
+  return {
+    brightPixelFraction: bright / pixels,
+    edgePixelFraction: edges / Math.max(1, pixels - 1),
+  };
+}
+
 function subtitlesAreVisible(metrics: BurnVisibilityMetrics): boolean {
   // The comparison is intentionally region-focused. Normal H.264 re-encode
   // noise usually changes many bytes slightly; real white text + black outline
   // changes a smaller subtitle-shaped area strongly.
-  return metrics.comparedBytes > 0 && (
+  const hasTextSignal =
+    (metrics.brightPixelFraction ?? 0) >= 0.0025 &&
+    (metrics.edgePixelFraction ?? 0) >= 0.006;
+  const hasVeryStrongTextSignal =
+    (metrics.brightPixelFraction ?? 0) >= 0.009 &&
+    (metrics.edgePixelFraction ?? 0) >= 0.012;
+  const changedFromReference = metrics.comparedBytes > 0 && (
     metrics.meanAbsDiff >= 4.5 ||
     metrics.strongDiffFraction >= 0.012 ||
     (metrics.meanAbsDiff >= 2.5 && metrics.strongDiffFraction >= 0.004)
   );
+  return (changedFromReference && hasTextSignal) || hasVeryStrongTextSignal;
 }
 
 async function verifyBurnedSubtitlePixels(
   ffmpeg: Awaited<ReturnType<typeof getFFmpeg>>,
-  inputName: string,
   outputName: string,
   assText: string,
-  perf: PerfOptions,
   token: string,
 ): Promise<BurnVisibilityMetrics> {
   const probe = firstVisibilityProbe(assText);
   if (!probe) throw new BurnVerificationError("Could not build a subtitle visibility probe from ASS cues");
-  const refName = `verify_ref_${token}.rgb`;
+  emitFfmpegLog(
+    `[BURN] Verification sample ${probe.timeSec.toFixed(2)}s` +
+      (probe.referenceTimeSec !== null ? ` vs ${probe.referenceTimeSec.toFixed(2)}s` : " with subtitle-region signal only"),
+  );
   const outName = `verify_out_${token}.rgb`;
-  const reference = await extractProbeCrop(ffmpeg, inputName, refName, probe, perf, true);
-  const burned = await extractProbeCrop(ffmpeg, outputName, outName, probe, perf, false);
-  const metrics = compareRawCrops(reference, burned);
+  let burned: Uint8Array;
+  try {
+    burned = await extractProbeCrop(ffmpeg, outputName, outName, probe, {}, false);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new BurnVerificationError(`Burned MP4 verification could not extract the subtitle frame: ${detail}`);
+  }
+  const signal = subtitleSignal(burned);
+  let metrics: BurnVisibilityMetrics = {
+    meanAbsDiff: 0,
+    strongDiffFraction: 0,
+    comparedBytes: burned.length,
+    ...signal,
+    sampleTimeSec: probe.timeSec,
+    referenceTimeSec: probe.referenceTimeSec,
+  };
+
+  if (probe.referenceTimeSec !== null) {
+    const refName = `verify_ref_${token}.rgb`;
+    try {
+      const reference = await extractProbeCrop(
+        ffmpeg,
+        outputName,
+        refName,
+        { ...probe, timeSec: probe.referenceTimeSec },
+        {},
+        false,
+      );
+      metrics = {
+        ...compareRawCrops(reference, burned),
+        ...signal,
+        sampleTimeSec: probe.timeSec,
+        referenceTimeSec: probe.referenceTimeSec,
+      };
+    } catch (err) {
+      emitFfmpegLog(`[BURN] Verification reference frame unavailable; using subtitle-region signal only (${err instanceof Error ? err.message : String(err)})`);
+    }
+  }
+
   if (!subtitlesAreVisible(metrics)) {
     throw new BurnVerificationError(
-      `Burned MP4 verification failed: subtitle region still matches the plain clip (mean diff ${metrics.meanAbsDiff.toFixed(2)}, strong ${(metrics.strongDiffFraction * 100).toFixed(2)}%)`,
+      `Burned MP4 verification failed: no visible subtitle signal in output (mean diff ${metrics.meanAbsDiff.toFixed(2)}, strong ${(metrics.strongDiffFraction * 100).toFixed(2)}%, bright ${((metrics.brightPixelFraction ?? 0) * 100).toFixed(2)}%, edge ${((metrics.edgePixelFraction ?? 0) * 100).toFixed(2)}%)`,
       metrics,
     );
   }
   return metrics;
-}
-
-function escapeDrawtextValue(value: string): string {
-  return value
-    .replace(/\\/g, "\\\\")
-    .replace(/'/g, "\\'")
-    .replace(/:/g, "\\:")
-    .replace(/,/g, "\\,")
-    .replace(/%/g, "\\%")
-    .replace(/\r?\n/g, "\\n");
-}
-
-function drawtextFilter(fontPath: string, cue: DrawtextCue, fontSize: number, outline: number): string {
-  const x = (cue.xPct / 100).toFixed(5);
-  const y = (cue.yPct / 100).toFixed(5);
-  return [
-    "drawtext",
-    `fontfile='${escapeFilterOption(fontPath)}'`,
-    `text='${escapeDrawtextValue(cue.text)}'`,
-    `x='(w*${x})-(text_w/2)'`,
-    `y='(h*${y})-(text_h/2)'`,
-    `fontsize=${Math.max(1, Math.round(fontSize))}`,
-    "fontcolor=white",
-    "bordercolor=black",
-    `borderw=${Math.max(0, Math.round(outline))}`,
-    "line_spacing=2",
-    "fix_bounds=1",
-    `enable='between(t,${cue.start.toFixed(3)},${cue.end.toFixed(3)})'`,
-  ].join(":");
-}
-
-function directFontDrawtextChain(assText: string, fontPath: string, perf: PerfOptions): string | null {
-  const parsed = parseGeneratedAssForDrawtext(assText);
-  if (!parsed) return null;
-  const sf = scaleFilter(perf);
-  return [
-    "setpts=PTS-STARTPTS",
-    sf,
-    ...parsed.cues.map((cue) => drawtextFilter(fontPath, cue, parsed.fontSize, parsed.outline)),
-  ].filter(Boolean).join(",");
 }
 
 function replaceAssStyleFont(assText: string, candidate: FontCandidate): string {
@@ -1024,9 +1080,9 @@ export async function burnSubtitles(
         "-y", outputName,
       ]);
       emitFfmpegLog("[BURN] MP4 created, verifying subtitle pixels…");
-      const metrics = await verifyBurnedSubtitlePixels(ffmpeg, inputName, outputName, verifyAss, perf, token);
+      const metrics = await verifyBurnedSubtitlePixels(ffmpeg, outputName, verifyAss, token);
       emitFfmpegLog(
-        `[BURN] Verified visible subtitles (mean diff ${metrics.meanAbsDiff.toFixed(2)}, strong ${(metrics.strongDiffFraction * 100).toFixed(2)}%)`,
+        `[BURN] Verified visible subtitles (mean diff ${metrics.meanAbsDiff.toFixed(2)}, strong ${(metrics.strongDiffFraction * 100).toFixed(2)}%, bright ${((metrics.brightPixelFraction ?? 0) * 100).toFixed(2)}%)`,
       );
       return await readOutputFile(ffmpeg, outputName, "Subtitle burn-in");
     };
@@ -1037,12 +1093,9 @@ export async function burnSubtitles(
     // renders without any burned subtitles. Rely on default stream
     // selection (best video + best audio) so `-vf` is applied correctly.
 
-    // NOTE: We intentionally do NOT use ffmpeg's `drawtext` filter here.
-    // ffmpeg.wasm's drawtext build crashes with "memory access out of bounds"
-    // when given many cues with `enable='between(t,...)'` expressions.
-    // Instead we go straight to libass, iterating every internal family name
-    // parsed from the uploaded font file so libass can match the real name
-    // (e.g. Whitney Book's PostScript/internal name differs from the UI label).
+    // NOTE: We intentionally keep the burn path deterministic and libass-only.
+    // ffmpeg.wasm is prone to memory crashes after many complex retries, so we
+    // try the matched uploaded face once, then the built-in Noto fallback.
 
     const sf = scaleFilter(perf);
     const firstProbe = firstVisibilityProbe(assText);
@@ -1087,16 +1140,15 @@ export async function burnSubtitles(
     let lastError: unknown = null;
     const finalCandidates = uniqueFontCandidates([
       selected,
-      ...candidates.filter((candidate) => candidate.source === "fallback"),
+      ...(selected.source === "uploaded" ? [fallbackFontCandidates()[0]] : []),
     ]);
     for (const candidate of finalCandidates) {
       const safeAss = replaceAssStyleFont(assText, candidate);
       await ffmpeg.writeFile(subsName, new TextEncoder().encode(safeAss));
       const subsFilter = subtitleFilter(subsName);
-      const variants = uniqueStrings([
-        ["setpts=PTS-STARTPTS", subsFilter, sf].filter(Boolean).join(","),
-        ["setpts=PTS-STARTPTS", sf, subsFilter].filter(Boolean).join(","),
-      ]);
+      const variants = sf
+        ? [["setpts=PTS-STARTPTS", sf, subsFilter].join(",")]
+        : [["setpts=PTS-STARTPTS", subsFilter].join(",")];
       for (let i = 0; i < variants.length; i++) {
         try {
           emitFfmpegLog(`[FONT] Burning with ${candidate.family}${candidate.bold ? " (bold)" : ""}`);
@@ -1105,7 +1157,7 @@ export async function burnSubtitles(
           lastError = err;
           if (err instanceof BurnVerificationError) {
             emitFfmpegLog(`[BURN] Verification failed for ${candidate.family}: ${err.message}`);
-            emitFfmpegLog("[BURN] Retrying with next burn graph/font…");
+            if (candidate.source === "uploaded") emitFfmpegLog("[BURN] Retrying with built-in fallback font…");
             continue;
           }
           emitFfmpegLog(`[BURN] Burn attempt failed for ${candidate.family}: ${err instanceof Error ? err.message : String(err)}`);
