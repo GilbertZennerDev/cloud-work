@@ -577,6 +577,61 @@ function Dashboard() {
       return next;
     });
 
+  /**
+   * Split a cue in half: picks the best break point near the middle
+   * (newline → sentence end → word boundary → hard midpoint) and splits
+   * the time range proportionally to the two halves' character counts.
+   * Subsequent cues are re-indexed. Position overrides are inherited by
+   * both halves so subtitles stay where the user put them.
+   */
+  const splitCue = (idx: number) =>
+    setCues((prev) => {
+      const target = prev.find((c) => c.index === idx);
+      if (!target) return prev;
+      const text = target.text.trim();
+      if (text.length < 2) return prev;
+      const mid = text.length / 2;
+      const candidates: number[] = [];
+      // Newlines
+      for (let i = 0; i < text.length; i++) if (text[i] === "\n") candidates.push(i + 1);
+      // Sentence endings followed by space/newline/EOS
+      const sentRe = /[.!?…]+["')\]]*\s+/g;
+      let m: RegExpExecArray | null;
+      while ((m = sentRe.exec(text))) candidates.push(m.index + m[0].length);
+      // Word boundaries
+      const wordRe = /\s+/g;
+      while ((m = wordRe.exec(text))) candidates.push(m.index + m[0].length);
+      const pickBest = (arr: number[]) =>
+        arr.length ? arr.reduce((b, p) => (Math.abs(p - mid) < Math.abs(b - mid) ? p : b)) : -1;
+      let cut =
+        pickBest(candidates.filter((p) => text[p - 1] === "\n")) >= 0
+          ? pickBest(candidates.filter((p) => text[p - 1] === "\n"))
+          : pickBest(candidates);
+      if (cut <= 0 || cut >= text.length) cut = Math.max(1, Math.round(mid));
+      const left = text.slice(0, cut).trim();
+      const right = text.slice(cut).trim();
+      if (!left || !right) return prev;
+      const dur = Math.max(0.1, target.end - target.start);
+      const totalChars = left.length + right.length || 1;
+      const leftDur = Math.max(0.2, (left.length / totalChars) * dur);
+      const midTime = Math.min(target.end - 0.1, target.start + leftDur);
+      const inherit = { xPct: target.xPct, yPct: target.yPct };
+      const a: SrtCue = { ...target, ...inherit, text: left, start: target.start, end: midTime };
+      const b: SrtCue = { ...target, ...inherit, text: right, start: midTime, end: target.end, index: target.index + 1 };
+      const out: SrtCue[] = [];
+      for (const c of prev) {
+        if (c.index === idx) {
+          out.push(a, b);
+        } else if (c.index > idx) {
+          out.push({ ...c, index: c.index + 1 });
+        } else {
+          out.push(c);
+        }
+      }
+      setSrtText(cuesToSrt(out));
+      return out;
+    });
+
   // ----- Auto-save & restore ----------------------------------------------
   // Build a stable key for the current source so multiple in-flight projects
   // don't overwrite each other. Recordings are keyed by id; local files by
