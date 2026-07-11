@@ -2283,21 +2283,40 @@ function Dashboard() {
           </Card>
 
           <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Log</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ScrollArea className="h-40 rounded-md border bg-muted/30 p-2">
-                <div ref={logRef} className="font-mono text-[11px] leading-relaxed">
-                  {logs.length === 0 ? (
-                    <p className="text-muted-foreground">No logs yet.</p>
-                  ) : (
-                    logs.map((l, i) => <div key={i}>{l}</div>)
-                  )}
-                </div>
-              </ScrollArea>
-            </CardContent>
+            <Collapsible open={logOpen} onOpenChange={setLogOpen}>
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className="w-full flex items-center justify-between p-4 text-left hover:bg-muted/40 rounded-lg transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <ChevronDown className={`h-4 w-4 transition-transform ${logOpen ? "rotate-180" : ""}`} />
+                    <span className="text-base font-semibold">Log</span>
+                    {logs.some((l) => l.startsWith("[ERROR]")) && (
+                      <span className="inline-block h-2 w-2 rounded-full bg-destructive" aria-label="Errors in log" />
+                    )}
+                  </div>
+                  <span className="text-xs text-muted-foreground">
+                    {logs.length === 0 ? "No logs yet" : `${logs.length} line${logs.length === 1 ? "" : "s"}`}
+                  </span>
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <CardContent className="pt-0">
+                  <ScrollArea className="h-40 rounded-md border bg-muted/30 p-2">
+                    <div ref={logRef} className="font-mono text-[11px] leading-relaxed">
+                      {logs.length === 0 ? (
+                        <p className="text-muted-foreground">No logs yet.</p>
+                      ) : (
+                        logs.map((l, i) => <div key={i}>{l}</div>)
+                      )}
+                    </div>
+                  </ScrollArea>
+                </CardContent>
+              </CollapsibleContent>
+            </Collapsible>
           </Card>
+
         </div>
       </main>
 
