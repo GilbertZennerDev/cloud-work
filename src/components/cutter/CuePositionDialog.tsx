@@ -91,6 +91,7 @@ export function CuePositionDialog({
               text={cue.text}
               videoWidth={videoWidth}
               lockAxis={lockAxis}
+              fontFamily={fontFamily}
               onChange={onChange}
               size="large"
               eager
