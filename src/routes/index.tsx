@@ -2198,6 +2198,31 @@ function Dashboard() {
         perf={perf}
       />
 
+      <CuePositionDialog
+        open={editorCueIdx !== null}
+        onOpenChange={(v) => { if (!v) setEditorCueIdx(null); }}
+        cue={editorCueIdx !== null ? cues.find((c) => c.index === editorCueIdx) ?? null : null}
+        videoSrc={sourcePreviewUrl}
+        defaultX={subX}
+        defaultY={subY}
+        fontSize={fontSize}
+        outline={subOutline}
+        lockAxis={lockAxis}
+        onLockAxisChange={setLockAxis}
+        onChange={(patch) => { if (editorCueIdx !== null) updateCuePos(editorCueIdx, patch); }}
+        onReset={() => { if (editorCueIdx !== null) resetCuePos(editorCueIdx); }}
+        onApplyToFollowing={(x, y) => {
+          if (editorCueIdx !== null) {
+            applyPosToFollowing(editorCueIdx, x, y);
+            toast.success("Position applied to following cues");
+          }
+        }}
+        onApplyToAll={(x, y) => {
+          applyPosToAll(x, y);
+          toast.success("Position applied to all cues");
+        }}
+      />
+
       <footer className="mx-auto max-w-7xl px-6 py-8 text-xs text-muted-foreground">
         Processing runs entirely in your browser via ffmpeg.wasm. Only the extracted audio is sent to LuxASR (uni.lu)
         for transcription. Keep this tab open while jobs run.
