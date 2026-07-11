@@ -90,6 +90,9 @@ export function FontPicker({ value, onChange, currentUserId }: Props) {
   const markReady = useServerFn(markFontReady);
   const setDefault = useServerFn(setDefaultFont);
   const removeFont = useServerFn(deleteFont);
+  const renameFont = useServerFn(updateFontFamily);
+  // Per-session set of font ids we've already re-verified so we don't refetch.
+  const healedRef = useRef<Set<string>>(new Set());
 
   const [uploading, setUploading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
