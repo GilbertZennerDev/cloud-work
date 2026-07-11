@@ -533,6 +533,15 @@ function Dashboard() {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [lockAxis, setLockAxis] = useState<"free" | "x" | "y">("free");
   const [editorCueIdx, setEditorCueIdx] = useState<number | null>(null);
+  const [fontFamily, setFontFamily] = useState<string | null>(null);
+  const { fonts: availableFonts } = useFonts();
+  // Resolve font override once for burn calls: selected font's signed URL.
+  const fontOverride = (() => {
+    if (!fontFamily) return undefined;
+    const f = availableFonts.find((x) => x.family === fontFamily && x.status === "ready" && x.url);
+    if (!f || !f.url) return undefined;
+    return { family: f.family, url: f.url, format: f.format };
+  })();
 
   const perfState = usePerfTier();
   const perf = perfState.profile;
