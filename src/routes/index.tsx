@@ -1883,6 +1883,8 @@ function Dashboard() {
               <CardTitle className="text-base">Subtitle look</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              <FontPicker value={fontFamily} onChange={setFontFamily} />
+
               <div>
                 <div className="flex items-center justify-between">
                   <Label>Font size</Label>
