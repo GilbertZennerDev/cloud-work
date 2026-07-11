@@ -122,7 +122,10 @@ export function FontPicker({ value, onChange, currentUserId }: Props) {
       toast.error("Could not determine font format.");
       return;
     }
-    const family = extractFamily(file.name);
+    const { family, verified } = await detectFamily(file, file.name, format);
+    if (!verified && (format === "woff" || format === "woff2")) {
+      toast.warning("WOFF/WOFF2 can't be inspected in the browser — burned video may not use this font. Prefer .ttf or .otf.");
+    }
 
     setUploading(true);
     try {
