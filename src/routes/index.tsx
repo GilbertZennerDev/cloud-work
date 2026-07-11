@@ -2019,16 +2019,19 @@ function Dashboard() {
                     )}
                   </div>
 
-                  {error && (
-                    <Alert variant="destructive">
-                      <AlertTitle>Pipeline failed</AlertTitle>
-                      <AlertDescription className="break-words text-xs">{error}</AlertDescription>
-                    </Alert>
-                  )}
                 </CardContent>
               </CollapsibleContent>
             </Collapsible>
           </Card>
+
+          {/* Errors from any pipeline path surface here so they remain
+              visible even when Advanced is collapsed. */}
+          {error && (
+            <Alert variant="destructive">
+              <AlertTitle>Pipeline failed</AlertTitle>
+              <AlertDescription className="break-words text-xs">{error}</AlertDescription>
+            </Alert>
+          )}
         </div>
 
         {/* RIGHT: Progress + outputs */}
