@@ -97,6 +97,20 @@ function scaleFilter(perf: PerfOptions): string | null {
   return `scale='min(iw,trunc(oh*a/2)*2)':'min(${h},ih)':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2`;
 }
 
+function escapeFilterOption(value: string): string {
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/:/g, "\\:")
+    .replace(/,/g, "\\,");
+}
+
+function subtitleFilter(subsName: string, fontFamily: string): string {
+  const filename = escapeFilterOption(subsName);
+  const family = escapeFilterOption(fontFamily.trim() || DEFAULT_FONT_FAMILY);
+  return `subtitles=filename='${filename}':fontsdir='/fonts':force_style='FontName=${family}'`;
+}
+
 /** Fast remux of an MPEG-TS blob into an MP4 container (no re-encode). */
 export async function remuxTsToMp4(
   file: File | Blob,
@@ -450,7 +464,7 @@ export function cuesToAss(cues: AssCue[], style: SubtitleStyle): string {
   const defaultX = Math.round((style.xPct / 100) * w);
   const defaultY = Math.round((style.yPct / 100) * h);
   const fontFamily = style.fontFamily && style.fontFamily.trim().length > 0
-    ? style.fontFamily
+    ? sanitizeAssFontFamily(style.fontFamily)
     : DEFAULT_FONT_FAMILY;
 
   // Alignment=5 => middle-center anchor, so \pos(x,y) places the centre of the text at (x,y).
@@ -498,6 +512,19 @@ export interface FontOverride {
   format: string;
 }
 
+function isBurnCompatibleFont(format: string): boolean {
+  return format === "ttf" || format === "otf";
+}
+
+function sanitizeAssFontFamily(family: string): string {
+  const cleaned = family
+    .replace(/[{},\\]/g, " ")
+    .replace(/,/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || DEFAULT_FONT_FAMILY;
+}
+
 export async function burnSubtitles(
   video: File | Blob,
   assText: string,
@@ -519,7 +546,8 @@ export async function burnSubtitles(
   const inputName = `burn_input_${token}.mp4`;
   const subsName = `subs_${token}.ass`;
   const outputName = `burned_${token}.mp4`;
-  await ensureFont(ffmpeg, fontOverride);
+  const burnFont = fontOverride && isBurnCompatibleFont(fontOverride.format) ? fontOverride : undefined;
+  await ensureFont(ffmpeg, burnFont);
   await ffmpeg.writeFile(inputName, await fetchFile(video));
   await ffmpeg.writeFile(subsName, new TextEncoder().encode(assText));
   const sf = scaleFilter(perf);
@@ -527,9 +555,10 @@ export async function burnSubtitles(
   // arg parser can't misinterpret the path, and `force_style=FontName=<family>`
   // to reassert the font at filter time — a defence in depth against libass
   // failing to match the ASS header Fontname against the /fonts directory.
-  const familyForForce = (fontOverride?.family ?? DEFAULT_FONT_FAMILY).replace(/'/g, "");
-  const subsFilter = `subtitles=filename=${subsName}:fontsdir=/fonts:force_style='FontName=${familyForForce}'`;
-  const vf = sf ? `${sf},${subsFilter}` : subsFilter;
+  const forcedFamily = sanitizeAssFontFamily(burnFont?.family ?? DEFAULT_FONT_FAMILY);
+  const subsFilter = subtitleFilter(subsName, forcedFamily);
+  const filters = ["setpts=PTS-STARTPTS", sf, subsFilter].filter(Boolean);
+  const vf = filters.join(",");
 
   // Capture ffmpeg logs during the burn so libass warnings ("Font 'X' not
   // found", "Could not open font", etc.) surface in the Cutter's log panel.
@@ -553,6 +582,7 @@ export async function burnSubtitles(
       ...encodeArgs(perf),
       "-c:a", "aac", "-b:a", perf.lowPerf ? "96k" : "128k",
       ...threadArgs(perf),
+      "-avoid_negative_ts", "make_zero",
       "-movflags", "+faststart",
       "-y", outputName,
     ]);
