@@ -1601,14 +1601,28 @@ function Dashboard() {
                                     </Button>
                                   )}
                                 </div>
-                                <SubtitlePreview
-                                  xPct={cx}
-                                  yPct={cy}
-                                  fontSize={Math.min(fontSize, 28)}
-                                  outline={subOutline}
-                                  sample={c.text.split(/\r?\n/)[0].slice(0, 60) || "…"}
-                                  onChange={(x, y) => updateCuePos(c.index, { xPct: x, yPct: y })}
-                                />
+                                {sourcePreviewUrl ? (
+                                  <CuePreview
+                                    videoSrc={sourcePreviewUrl}
+                                    time={(c.start + c.end) / 2}
+                                    xPct={cx}
+                                    yPct={cy}
+                                    fontSize={fontSize}
+                                    outline={subOutline}
+                                    text={c.text}
+                                    lockAxis={lockAxis}
+                                    onChange={(patch) => updateCuePos(c.index, patch)}
+                                  />
+                                ) : (
+                                  <SubtitlePreview
+                                    xPct={cx}
+                                    yPct={cy}
+                                    fontSize={Math.min(fontSize, 28)}
+                                    outline={subOutline}
+                                    sample={c.text.split(/\r?\n/)[0].slice(0, 60) || "…"}
+                                    onChange={(x, y) => updateCuePos(c.index, { xPct: x, yPct: y })}
+                                  />
+                                )}
                                 <div className="grid grid-cols-2 gap-2">
                                   <div>
                                     <div className="flex items-center justify-between">
