@@ -1741,6 +1741,21 @@ function Dashboard() {
                                 >
                                   <SplitSquareHorizontal className="h-3 w-3 mr-1" /> Split
                                 </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-6 px-2 text-[11px]"
+                                  title="Re-run LuxASR on this block's audio to fix inaccurate text"
+                                  disabled={!file || reasrIdx !== null || isRunning}
+                                  onClick={() => retranscribeCue(c.index)}
+                                >
+                                  {reasrIdx === c.index ? (
+                                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                  ) : (
+                                    <RefreshCw className="h-3 w-3 mr-1" />
+                                  )}
+                                  Re-ASR
+                                </Button>
                                 {sourcePreviewUrl && (
                                   <Button
                                     size="sm"
