@@ -66,6 +66,8 @@ import { SubtitlePreview } from "@/components/cutter/SubtitlePreview";
 import { LiveSubtitleOverlay } from "@/components/cutter/LiveSubtitleOverlay";
 import { CuePreview } from "@/components/cutter/CuePreview";
 import { CuePositionDialog } from "@/components/cutter/CuePositionDialog";
+import { FontPicker } from "@/components/cutter/FontPicker";
+import { useFonts } from "@/lib/fonts/useFonts";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Maximize2, LockKeyhole, MoveHorizontal, MoveVertical, SplitSquareHorizontal, Merge, RefreshCw } from "lucide-react";
 import { SyncCalibrator } from "@/components/cutter/SyncCalibrator";
