@@ -18,6 +18,7 @@ import {
   deleteFont,
   markFontReady,
   setDefaultFont,
+  updateFontFamily,
   type FontRow,
 } from "@/lib/fonts.functions";
 import { useFonts } from "@/lib/fonts/useFonts";
@@ -27,11 +28,45 @@ const DEFAULT_FAMILY_VALUE = "__default__";
 const MAX_BYTES = 5 * 1024 * 1024;
 const ALLOWED_EXT = /\.(ttf|otf|woff2?|)$/i;
 
-function extractFamily(filename: string): string {
+function filenameFamily(filename: string): string {
   const stem = filename.replace(/\.(ttf|otf|woff2?|)$/i, "").trim();
-  // Normalise separators to spaces; keep alnum + spaces + hyphens.
   const cleaned = stem.replace(/[_.]+/g, " ").replace(/\s+/g, " ").trim();
   return cleaned || stem || "Custom Font";
+}
+
+/**
+ * Read the font's real family name from its `name` table. libass inside
+ * ffmpeg matches fonts by this internal name, so ASS Fontname MUST equal it
+ * — otherwise the burn silently falls back to Noto Sans even when the CSS
+ * @font-face preview looks correct.
+ *
+ * opentype.js only handles uncompressed TTF/OTF. For WOFF/WOFF2 we fall back
+ * to the filename-derived family; the burn may then miss the font, but we
+ * warn the user.
+ */
+async function detectFamily(file: Blob, filename: string, format: string): Promise<{ family: string; verified: boolean }> {
+  const fallback = filenameFamily(filename);
+  if (format !== "ttf" && format !== "otf") return { family: fallback, verified: false };
+  try {
+    const opentype = await import("opentype.js");
+    const buf = await file.arrayBuffer();
+    const font = opentype.parse(buf);
+    const names = font.names as unknown as Record<string, Record<string, string> | undefined>;
+    const pick = (key: string) => {
+      const entry = names[key];
+      if (!entry) return null;
+      return entry.en || Object.values(entry)[0] || null;
+    };
+    const real =
+      pick("preferredFamily") ||
+      pick("fontFamily") ||
+      pick("fullName") ||
+      null;
+    if (real && real.trim()) return { family: real.trim(), verified: true };
+  } catch {
+    // Parsing failed — fall through to filename fallback.
+  }
+  return { family: fallback, verified: false };
 }
 
 function extractFormat(filename: string): "ttf" | "otf" | "woff" | "woff2" | null {
@@ -55,6 +90,9 @@ export function FontPicker({ value, onChange, currentUserId }: Props) {
   const markReady = useServerFn(markFontReady);
   const setDefault = useServerFn(setDefaultFont);
   const removeFont = useServerFn(deleteFont);
+  const renameFont = useServerFn(updateFontFamily);
+  // Per-session set of font ids we've already re-verified so we don't refetch.
+  const healedRef = useRef<Set<string>>(new Set());
 
   const [uploading, setUploading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -67,6 +105,34 @@ export function FontPicker({ value, onChange, currentUserId }: Props) {
 
   const selected: FontRow | null =
     value ? fonts.find((f) => f.family === value && f.status === "ready") ?? null : null;
+
+  // Heal legacy rows whose stored family was filename-derived: fetch the file,
+  // re-parse, and rewrite the DB row if the real family differs. Runs once
+  // per font per session, only for TTF/OTF (opentype.js can't read WOFF).
+  useEffect(() => {
+    if (!selected || !selected.url) return;
+    if (selected.format !== "ttf" && selected.format !== "otf") return;
+    if (healedRef.current.has(selected.id)) return;
+    healedRef.current.add(selected.id);
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(selected.url!);
+        if (!res.ok) return;
+        const blob = await res.blob();
+        const { family, verified } = await detectFamily(blob, selected.originalFilename ?? "font", selected.format);
+        if (cancelled || !verified) return;
+        if (family === selected.family) return;
+        await renameFont({ data: { id: selected.id, family } });
+        await qc.invalidateQueries({ queryKey: ["fonts"] });
+        onChange(family);
+        toast.info(`Font family updated to "${family}" so the burn matches the preview.`);
+      } catch {
+        // best-effort — old row stays as-is
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selected, renameFont, qc, onChange]);
 
   const openPicker = () => fileInputRef.current?.click();
 
@@ -87,7 +153,10 @@ export function FontPicker({ value, onChange, currentUserId }: Props) {
       toast.error("Could not determine font format.");
       return;
     }
-    const family = extractFamily(file.name);
+    const { family, verified } = await detectFamily(file, file.name, format);
+    if (!verified && (format === "woff" || format === "woff2")) {
+      toast.warning("WOFF/WOFF2 can't be inspected in the browser — burned video may not use this font. Prefer .ttf or .otf.");
+    }
 
     setUploading(true);
     try {

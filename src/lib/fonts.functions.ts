@@ -14,6 +14,11 @@ const CreateUpload = z.object({
 
 const IdInput = z.object({ id: z.string().uuid() });
 
+const UpdateFamily = z.object({
+  id: z.string().uuid(),
+  family: z.string().min(1).max(120),
+});
+
 export interface FontRow {
   id: string;
   family: string;
@@ -117,6 +122,24 @@ export const markFontReady = createServerFn({ method: "POST" })
     const { error } = await context.supabase
       .from("fonts")
       .update({ status: "ready" })
+      .eq("id", data.id)
+      .eq("uploaded_by", context.userId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+/**
+ * Rewrites the family for one of the caller's own font rows. Used to
+ * heal legacy uploads whose stored family was derived from the filename
+ * rather than the font file's internal `name` table.
+ */
+export const updateFontFamily = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => UpdateFamily.parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("fonts")
+      .update({ family: data.family })
       .eq("id", data.id)
       .eq("uploaded_by", context.userId);
     if (error) throw new Error(error.message);
