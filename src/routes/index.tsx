@@ -1623,6 +1623,16 @@ function Dashboard() {
                                 >
                                   End ◂
                                 </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-6 px-2 text-[11px]"
+                                  title="Split this block in half (text + time)"
+                                  disabled={c.text.trim().length < 2 || c.end - c.start < 0.4}
+                                  onClick={() => splitCue(c.index)}
+                                >
+                                  <SplitSquareHorizontal className="h-3 w-3 mr-1" /> Split
+                                </Button>
                                 {sourcePreviewUrl && (
                                   <Button
                                     size="sm"
