@@ -1783,16 +1783,8 @@ function Dashboard() {
               </div>
 
               <div>
-                <div className="flex items-center justify-between">
-                  <Label>Subtitle position &amp; outline</Label>
-                  <span className="text-xs text-muted-foreground">
-                    x {subX}% · y {subY}% · outline {subOutline}px
-                  </span>
-                </div>
                 <p className="text-xs text-muted-foreground mb-2">
-                  {sourcePreviewUrl
-                    ? "Play the video and drag the caption directly on the real frame — what you see is what gets burned in."
-                    : "Zeih den Text am Preview, oder benotz d'Sliders. Iwwerholl gëtt op déi geschnidde Videosgréisst berechent."}
+                  Drag the caption on the frame. Per-cue tweaks live in the transcript list below.
                 </p>
                 {sourcePreviewUrl ? (
                   <LiveSubtitleOverlay
@@ -1821,58 +1813,77 @@ function Dashboard() {
                     }}
                   />
                 )}
-                <div className="mt-3 flex items-center gap-2">
-                  <Label className="text-xs">Lock drag axis</Label>
-                  <ToggleGroup
-                    type="single"
-                    size="sm"
-                    value={lockAxis}
-                    onValueChange={(v) => v && setLockAxis(v as "free" | "x" | "y")}
-                  >
-                    <ToggleGroupItem value="free" aria-label="Free">
-                      <LockKeyhole className="h-3 w-3 mr-1 opacity-40" /> Free
-                    </ToggleGroupItem>
-                    <ToggleGroupItem value="y" aria-label="Vertical only">
-                      <MoveVertical className="h-3 w-3 mr-1" /> Y only
-                    </ToggleGroupItem>
-                    <ToggleGroupItem value="x" aria-label="Horizontal only">
-                      <MoveHorizontal className="h-3 w-3 mr-1" /> X only
-                    </ToggleGroupItem>
-                  </ToggleGroup>
-                  <span className="text-[11px] text-muted-foreground ml-2">
-                    Restrict dragging so you only nudge one direction.
-                  </span>
-                </div>
-                <div className="mt-3 space-y-3">
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <Label className="text-xs">Horizontal (X)</Label>
-                      <span className="text-xs text-muted-foreground">{subX}%</span>
+                <Collapsible open={posControlsOpen} onOpenChange={setPosControlsOpen} className="mt-3">
+                  <CollapsibleTrigger asChild>
+                    <button
+                      type="button"
+                      className="w-full flex items-center justify-between px-3 py-2 text-left rounded-md border bg-muted/20 hover:bg-muted/40 transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${posControlsOpen ? "rotate-180" : ""}`} />
+                        <span className="text-sm font-medium">Fine-tune default position &amp; outline</span>
+                      </div>
+                      <span className="text-xs font-mono text-muted-foreground">
+                        x {subX}% · y {subY}% · outline {subOutline}px
+                      </span>
+                    </button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="pt-3">
+                    <div className="flex items-center gap-2">
+                      <Label className="text-xs">Lock drag axis</Label>
+                      <ToggleGroup
+                        type="single"
+                        size="sm"
+                        value={lockAxis}
+                        onValueChange={(v) => v && setLockAxis(v as "free" | "x" | "y")}
+                      >
+                        <ToggleGroupItem value="free" aria-label="Free">
+                          <LockKeyhole className="h-3 w-3 mr-1 opacity-40" /> Free
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value="y" aria-label="Vertical only">
+                          <MoveVertical className="h-3 w-3 mr-1" /> Y only
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value="x" aria-label="Horizontal only">
+                          <MoveHorizontal className="h-3 w-3 mr-1" /> X only
+                        </ToggleGroupItem>
+                      </ToggleGroup>
+                      <span className="text-[11px] text-muted-foreground ml-2">
+                        Restrict dragging so you only nudge one direction.
+                      </span>
                     </div>
-                    <Slider min={0} max={100} step={1} value={[subX]} onValueChange={(v) => setSubX(v[0])} />
-                  </div>
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <Label className="text-xs">Vertikal (Y)</Label>
-                      <span className="text-xs text-muted-foreground">{subY}%</span>
+                    <div className="mt-3 space-y-3">
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs">Horizontal (X)</Label>
+                          <span className="text-xs text-muted-foreground">{subX}%</span>
+                        </div>
+                        <Slider min={0} max={100} step={1} value={[subX]} onValueChange={(v) => setSubX(v[0])} />
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs">Vertikal (Y)</Label>
+                          <span className="text-xs text-muted-foreground">{subY}%</span>
+                        </div>
+                        <Slider min={0} max={100} step={1} value={[subY]} onValueChange={(v) => setSubY(v[0])} />
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs">Schwaarze Bord (Outline)</Label>
+                          <span className="text-xs text-muted-foreground">{subOutline}px</span>
+                        </div>
+                        <Slider
+                          min={0}
+                          max={8}
+                          step={1}
+                          value={[subOutline]}
+                          onValueChange={(v) => setSubOutline(v[0])}
+                        />
+                      </div>
                     </div>
-                    <Slider min={0} max={100} step={1} value={[subY]} onValueChange={(v) => setSubY(v[0])} />
-                  </div>
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <Label className="text-xs">Schwaarze Bord (Outline)</Label>
-                      <span className="text-xs text-muted-foreground">{subOutline}px</span>
-                    </div>
-                    <Slider
-                      min={0}
-                      max={8}
-                      step={1}
-                      value={[subOutline]}
-                      onValueChange={(v) => setSubOutline(v[0])}
-                    />
-                  </div>
-                </div>
+                  </CollapsibleContent>
+                </Collapsible>
               </div>
+
             </CardContent>
           </Card>
 
