@@ -1474,19 +1474,6 @@ function Dashboard() {
     };
   }, [sourcePreviewUrl]);
 
-  // Track source dimensions so per-cue previews scale ASS fontSize/outline
-  // exactly the same way as the burned-in output (which uses actual video px).
-  const [sourceDims, setSourceDims] = useState<{ width: number; height: number } | null>(null);
-  useEffect(() => {
-    const src = sourcePreviewBlob ?? file;
-    if (!src) { setSourceDims(null); return; }
-    let cancelled = false;
-    getVideoDimensions(src)
-      .then((d) => { if (!cancelled) setSourceDims(d); })
-      .catch(() => { if (!cancelled) setSourceDims(null); });
-    return () => { cancelled = true; };
-  }, [file, sourcePreviewBlob]);
-
   useEffect(() => {
     let cancelled = false;
     setSourcePreviewBlob(null);
