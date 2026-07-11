@@ -388,15 +388,15 @@ export interface AssCue { start: number; end: number; text: string; xPct?: numbe
 // Cache one measuring context per font-size so we don't recreate it per cue.
 let wrapCanvas: HTMLCanvasElement | null = null;
 let wrapCtx: CanvasRenderingContext2D | null = null;
-function getWrapCtx(fontSize: number): CanvasRenderingContext2D | null {
+function getWrapCtx(fontSize: number, fontFamily: string): CanvasRenderingContext2D | null {
   if (typeof document === "undefined") return null;
   if (!wrapCanvas) {
     wrapCanvas = document.createElement("canvas");
     wrapCtx = wrapCanvas.getContext("2d");
   }
   if (!wrapCtx) return null;
-  // Match burn font (Noto Sans, Bold=1) and preview (`font-semibold`).
-  wrapCtx.font = `bold ${fontSize}px "Noto Sans", system-ui, sans-serif`;
+  // Match burn font (Bold=1) and preview (`font-semibold`).
+  wrapCtx.font = `bold ${fontSize}px "${fontFamily}", system-ui, sans-serif`;
   return wrapCtx;
 }
 
@@ -406,8 +406,8 @@ function getWrapCtx(fontSize: number): CanvasRenderingContext2D | null {
  * user typed. Falls back to a char-count heuristic outside the browser
  * (worker/SSR) so results stay deterministic.
  */
-function wrapTextForAss(text: string, fontSize: number, maxWidthPx: number): string {
-  const ctx = getWrapCtx(fontSize);
+function wrapTextForAss(text: string, fontSize: number, maxWidthPx: number, fontFamily: string): string {
+  const ctx = getWrapCtx(fontSize, fontFamily);
   const fallbackCharsPerLine = Math.max(6, Math.floor(maxWidthPx / (fontSize * 0.55)));
 
   const wrapLine = (line: string): string => {
