@@ -1255,9 +1255,30 @@ function Dashboard() {
       <main className="mx-auto max-w-7xl px-6 py-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         {/* LEFT: Controls */}
         <div className="space-y-6">
+          {restoreBanner && (
+            <Alert>
+              <AlertTitle className="text-sm">Restore your previous session?</AlertTitle>
+              <AlertDescription className="text-xs">
+                Found saved work
+                {restoreBanner.fileName ? ` for "${restoreBanner.fileName}"` : ""} from{" "}
+                {timeAgo(restoreBanner.savedAt)}. Includes transcript edits, cue selections, subtitle position and settings.
+                <div className="mt-2 flex gap-2">
+                  <Button size="sm" onClick={acceptRestore}>Restore</Button>
+                  <Button size="sm" variant="ghost" onClick={discardRestore}>Discard</Button>
+                </div>
+              </AlertDescription>
+            </Alert>
+          )}
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">1. Source video</CardTitle>
+              <CardTitle className="text-base flex items-center justify-between">
+                <span>1. Source video</span>
+                {sessionKey && (
+                  <Button size="sm" variant="ghost" onClick={resetSession} className="h-7 text-xs">
+                    Reset session
+                  </Button>
+                )}
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <label
