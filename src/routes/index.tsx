@@ -1888,6 +1888,35 @@ function Dashboard() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <Label>Font</Label>
+                  {fontsListQuery.isLoading && (
+                    <span className="text-xs text-muted-foreground">loading…</span>
+                  )}
+                </div>
+                <Select value={subFont} onValueChange={setSubFont}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Default (bundled)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="default">Default (bundled Noto Sans)</SelectItem>
+                    {fontsListQuery.data?.map((f) => (
+                      <SelectItem key={f.id} value={f.family}>
+                        {f.family}
+                        {f.is_default ? " · default" : ""}
+                        <span className="text-muted-foreground"> · .{f.format}</span>
+                      </SelectItem>
+                    ))}
+                    {fontsListQuery.data && fontsListQuery.data.length === 0 && (
+                      <SelectItem value="__none" disabled>
+                        No uploaded fonts — add in Admin
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
                 <div className="flex items-center justify-between">
                   <Label>Font size</Label>
                   <span className="text-xs text-muted-foreground">{fontSize}px</span>
