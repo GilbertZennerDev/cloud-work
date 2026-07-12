@@ -40,6 +40,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useQuery } from "@tanstack/react-query";
 
 import { parseTimeToSeconds, formatSeconds } from "@/lib/subtitles/parseTime";
 import {
@@ -518,6 +520,24 @@ function Dashboard() {
   };
   const [mode, setMode] = useState<Mode>("full");
   const [fontSize, setFontSize] = useState(28);
+  const [subFont, setSubFont] = useState<string>("default");
+  const fontsListQuery = useQuery({
+    queryKey: ["fonts", "list"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("fonts")
+        .select("id,family,format,is_default")
+        .eq("status", "ready")
+        .order("family", { ascending: true });
+      if (error) throw error;
+      return data as { id: string; family: string; format: string; is_default: boolean }[];
+    },
+  });
+  useEffect(() => {
+    if (subFont !== "default" || !fontsListQuery.data) return;
+    const def = fontsListQuery.data.find((f) => f.is_default);
+    if (def) setSubFont(def.family);
+  }, [fontsListQuery.data, subFont]);
   const [subX, setSubX] = useState(50); // % from left (centre of text)
   const [subY, setSubY] = useState(88); // % from top (centre of text)
   const [subOutline, setSubOutline] = useState(2); // px
@@ -1867,6 +1887,35 @@ function Dashboard() {
               <CardTitle className="text-base">Subtitle look</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <Label>Font</Label>
+                  {fontsListQuery.isLoading && (
+                    <span className="text-xs text-muted-foreground">loading…</span>
+                  )}
+                </div>
+                <Select value={subFont} onValueChange={setSubFont}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Default (bundled)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="default">Default (bundled Noto Sans)</SelectItem>
+                    {fontsListQuery.data?.map((f) => (
+                      <SelectItem key={f.id} value={f.family}>
+                        {f.family}
+                        {f.is_default ? " · default" : ""}
+                        <span className="text-muted-foreground"> · .{f.format}</span>
+                      </SelectItem>
+                    ))}
+                    {fontsListQuery.data && fontsListQuery.data.length === 0 && (
+                      <SelectItem value="__none" disabled>
+                        No uploaded fonts — add in Admin
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div>
                 <div className="flex items-center justify-between">
                   <Label>Font size</Label>
