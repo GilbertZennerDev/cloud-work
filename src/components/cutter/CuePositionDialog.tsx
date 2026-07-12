@@ -25,7 +25,6 @@ interface Props {
   onReset: () => void;
   onApplyToFollowing: (xPct: number, yPct: number) => void;
   onApplyToAll: (xPct: number, yPct: number) => void;
-  fontFamily?: string | null;
 }
 
 /**
@@ -35,7 +34,7 @@ interface Props {
  */
 export function CuePositionDialog({
   open, onOpenChange, cue, videoSrc, defaultX, defaultY, fontSize, outline, videoWidth, lockAxis, onLockAxisChange,
-  onChange, onReset, onApplyToFollowing, onApplyToAll, fontFamily,
+  onChange, onReset, onApplyToFollowing, onApplyToAll,
 }: Props) {
   const cx = cue?.xPct ?? defaultX;
   const cy = cue?.yPct ?? defaultY;
@@ -91,7 +90,6 @@ export function CuePositionDialog({
               text={cue.text}
               videoWidth={videoWidth}
               lockAxis={lockAxis}
-              fontFamily={fontFamily}
               onChange={onChange}
               size="large"
               eager

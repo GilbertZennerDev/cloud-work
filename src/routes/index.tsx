@@ -66,8 +66,6 @@ import { SubtitlePreview } from "@/components/cutter/SubtitlePreview";
 import { LiveSubtitleOverlay } from "@/components/cutter/LiveSubtitleOverlay";
 import { CuePreview } from "@/components/cutter/CuePreview";
 import { CuePositionDialog } from "@/components/cutter/CuePositionDialog";
-import { FontPicker } from "@/components/cutter/FontPicker";
-import { useFonts } from "@/lib/fonts/useFonts";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Maximize2, LockKeyhole, MoveHorizontal, MoveVertical, SplitSquareHorizontal, Merge, RefreshCw } from "lucide-react";
 import { SyncCalibrator } from "@/components/cutter/SyncCalibrator";
@@ -533,15 +531,6 @@ function Dashboard() {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [lockAxis, setLockAxis] = useState<"free" | "x" | "y">("free");
   const [editorCueIdx, setEditorCueIdx] = useState<number | null>(null);
-  const [fontFamily, setFontFamily] = useState<string | null>(null);
-  const { fonts: availableFonts } = useFonts();
-  // Resolve font override once for burn calls: selected font's signed URL.
-  const fontOverride = (() => {
-    if (!fontFamily) return undefined;
-    const f = availableFonts.find((x) => x.family === fontFamily && x.status === "ready" && x.url);
-    if (!f || !f.url) return undefined;
-    return { family: f.family, url: f.url, format: f.format };
-  })();
 
   const perfState = usePerfTier();
   const perf = perfState.profile;
@@ -813,7 +802,6 @@ function Dashboard() {
     setAudioOffsetSec(saved.audioOffsetSec);
     setBurnIn(saved.burnIn);
     if (saved.lockAxis) setLockAxis(saved.lockAxis);
-    if (saved.fontFamily !== undefined) setFontFamily(saved.fontFamily);
   };
 
   const acceptRestore = async () => {
@@ -856,7 +844,6 @@ function Dashboard() {
         audioOffsetSec,
         burnIn,
         lockAxis,
-        fontFamily,
       }).catch(() => {});
     }, 800);
     return () => {
@@ -864,7 +851,7 @@ function Dashboard() {
     };
   }, [
     sessionKey, file, rawCues, cues, selectedCues, mode, segments,
-    subX, subY, fontSize, subOutline, maxSentences, maxChars, audioOffsetSec, burnIn, lockAxis, fontFamily,
+    subX, subY, fontSize, subOutline, maxSentences, maxChars, audioOffsetSec, burnIn, lockAxis,
   ]);
 
   const resetSession = async () => {
@@ -891,86 +878,6 @@ function Dashboard() {
       return next.length > 400 ? next.slice(-400) : next;
     });
   }, []);
-
-  // Track source dimensions so per-cue previews and burn ASS PlayRes use the
-  // same basis. This also provides a fallback when a freshly-created MP4 Blob
-  // is valid but the browser metadata event fails or races.
-  const [sourceDims, setSourceDims] = useState<{ width: number; height: number } | null>(null);
-  useEffect(() => {
-    const src = sourcePreviewBlob ?? file;
-    if (!src) { setSourceDims(null); return; }
-    let cancelled = false;
-    getVideoDimensions(src)
-      .then((d) => { if (!cancelled) setSourceDims(d); })
-      .catch(() => { if (!cancelled) setSourceDims(null); });
-    return () => { cancelled = true; };
-  }, [file, sourcePreviewBlob]);
-
-  const readVideoDuration = useCallback((video: Blob): Promise<number | null> => {
-    return new Promise((resolve) => {
-      const url = URL.createObjectURL(video);
-      const v = document.createElement("video");
-      const done = (value: number | null) => {
-        clearTimeout(timer);
-        URL.revokeObjectURL(url);
-        resolve(value && isFinite(value) && value > 0 ? value : null);
-      };
-      const timer = window.setTimeout(() => done(null), 3500);
-      v.preload = "metadata";
-      v.onloadedmetadata = () => done(v.duration);
-      v.onerror = () => done(null);
-      v.src = url;
-    });
-  }, []);
-
-  const burnClipWithCurrentSettings = useCallback(async (
-    video: Blob,
-    burnCues: SrtCue[],
-    label: string,
-    onProgress: (n: number) => void,
-  ): Promise<Blob> => {
-    const visibleCues = burnCues.filter((c) => c.end > c.start && c.text.trim().length > 0);
-    if (visibleCues.length === 0) throw new Error("No visible subtitle cues to burn");
-    let dims: { width: number; height: number };
-    try {
-      dims = await getVideoDimensions(video);
-    } catch (err) {
-      dims = sourceDims ?? { width: 1280, height: 720 };
-      appendLog(`[BURN] Browser metadata unavailable (${(err as Error).message}); using ${dims.width}×${dims.height} burn dimensions`);
-    }
-    const duration = await readVideoDuration(video);
-    const first = visibleCues[0];
-    if (duration !== null && first.start >= Math.max(0.05, duration - 0.02)) {
-      throw new Error(
-        `Subtitle burn-in aborted: first cue starts at ${formatSeconds(first.start)}, outside the ${formatSeconds(duration)} clip`,
-      );
-    }
-    appendLog(
-      `[BURN] ${label}: ${visibleCues.length} cues, video ${dims.width}×${dims.height}${duration !== null ? `, duration ${formatSeconds(duration)}` : ""}, first ${formatSeconds(first.start)}–${formatSeconds(first.end)}`,
-    );
-    appendLog(
-      fontFamily
-        ? `[BURN] Font row ${fontOverride ? `found: ${fontOverride.family} (.${fontOverride.format})` : `missing for "${fontFamily}"; burn will use built-in fallback`}`
-        : "[BURN] Font row: built-in Noto Sans",
-    );
-    const ass = cuesToAss(visibleCues, {
-      fontSize,
-      outline: subOutline,
-      xPct: subX,
-      yPct: subY,
-      videoWidth: dims.width,
-      videoHeight: dims.height,
-      fontFamily,
-    });
-    const subbed = await burnSubtitles(
-      video,
-      ass,
-      onProgress,
-      { lowPerf: effLowPerf, maxHeight: effMaxHeight },
-      fontOverride,
-    );
-    return new Blob([subbed as BlobPart], { type: "video/mp4" });
-  }, [appendLog, effLowPerf, effMaxHeight, fontFamily, fontOverride, fontSize, readVideoDuration, sourceDims, subOutline, subX, subY]);
 
   // Attach ffmpeg log listener once
   useMemo(() => {
@@ -1185,9 +1092,18 @@ function Dashboard() {
       if (burnIn) {
         moveToStage("burning");
         setProgress(0);
-        const subbed = await burnClipWithCurrentSettings(workingVideo, workingCues, "full pipeline", setProgress);
+        const dims = await getVideoDimensions(workingVideo);
+        const ass = cuesToAss(workingCues, {
+          fontSize,
+          outline: subOutline,
+          xPct: subX,
+          yPct: subY,
+          videoWidth: dims.width,
+          videoHeight: dims.height,
+        });
+        const subbed = await burnSubtitles(workingVideo, ass, setProgress, { lowPerf: effLowPerf, maxHeight: effMaxHeight });
         checkCancel();
-        setSubbedBlob(subbed);
+        setSubbedBlob(new Blob([subbed as BlobPart], { type: "video/mp4" }));
         setProgress(1);
       }
 
@@ -1423,9 +1339,18 @@ function Dashboard() {
 
       moveToStage("burning");
       setProgress(0);
-      const subbed = await burnClipWithCurrentSettings(clip, remapped, "cut selected", setProgress);
+      const dims = await getVideoDimensions(clip);
+      const ass = cuesToAss(remapped, {
+        fontSize,
+        outline: subOutline,
+        xPct: subX,
+        yPct: subY,
+        videoWidth: dims.width,
+        videoHeight: dims.height,
+      });
+      const subbed = await burnSubtitles(clip, ass, setProgress, { lowPerf: effLowPerf, maxHeight: effMaxHeight });
       checkCancel();
-      setSubbedBlob(subbed);
+      setSubbedBlob(new Blob([subbed as BlobPart], { type: "video/mp4" }));
       setProgress(1);
 
       moveToStage("done");
@@ -1473,6 +1398,19 @@ function Dashboard() {
       if (sourcePreviewUrl) URL.revokeObjectURL(sourcePreviewUrl);
     };
   }, [sourcePreviewUrl]);
+
+  // Track source dimensions so per-cue previews scale ASS fontSize/outline
+  // exactly the same way as the burned-in output (which uses actual video px).
+  const [sourceDims, setSourceDims] = useState<{ width: number; height: number } | null>(null);
+  useEffect(() => {
+    const src = sourcePreviewBlob ?? file;
+    if (!src) { setSourceDims(null); return; }
+    let cancelled = false;
+    getVideoDimensions(src)
+      .then((d) => { if (!cancelled) setSourceDims(d); })
+      .catch(() => { if (!cancelled) setSourceDims(null); });
+    return () => { cancelled = true; };
+  }, [file, sourcePreviewBlob]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1870,7 +1808,6 @@ function Dashboard() {
                                     text={c.text}
                                     videoWidth={sourceDims?.width}
                                     lockAxis={lockAxis}
-                                    fontFamily={fontFamily}
                                     onChange={(patch) => updateCuePos(c.index, patch)}
                                   />
                                 ) : (
@@ -1930,8 +1867,6 @@ function Dashboard() {
               <CardTitle className="text-base">Subtitle look</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <FontPicker value={fontFamily} onChange={setFontFamily} />
-
               <div>
                 <div className="flex items-center justify-between">
                   <Label>Font size</Label>
@@ -1954,7 +1889,6 @@ function Dashboard() {
                     cues={cues.length > 0 ? cues : undefined}
                     lockAxis={lockAxis}
                     videoWidth={sourceDims?.width}
-                    fontFamily={fontFamily}
                     onChange={(x, y) => {
                       setSubX(x);
                       setSubY(y);
@@ -2503,7 +2437,6 @@ function Dashboard() {
         outline={subOutline}
         videoWidth={sourceDims?.width}
         lockAxis={lockAxis}
-        fontFamily={fontFamily}
         onLockAxisChange={setLockAxis}
         onChange={(patch) => { if (editorCueIdx !== null) updateCuePos(editorCueIdx, patch); }}
         onReset={() => { if (editorCueIdx !== null) resetCuePos(editorCueIdx); }}

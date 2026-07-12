@@ -21,8 +21,6 @@ interface Props {
   videoWidth?: number;
   /** Optional external ref for parent-controlled seeking. */
   videoRef?: React.RefObject<HTMLVideoElement | null>;
-  /** Optional custom font family (matches ASS Fontname + @font-face). */
-  fontFamily?: string | null;
 }
 
 /**
@@ -35,7 +33,7 @@ interface Props {
  */
 export function LiveSubtitleOverlay({
   src, xPct, yPct, fontSize, outline, cues, defaultSample = "Beispill Ennertitlen",
-  onChange, onCueChange, onTimeUpdate, lockAxis = "free", videoWidth, videoRef, fontFamily,
+  onChange, onCueChange, onTimeUpdate, lockAxis = "free", videoWidth, videoRef,
 }: Props) {
   const internalVideoRef = useRef<HTMLVideoElement>(null);
   const videoElRef = videoRef ?? internalVideoRef;
@@ -148,7 +146,7 @@ export function LiveSubtitleOverlay({
         aria-label="Drag to reposition subtitle"
       >
         <span
-          className="absolute font-semibold text-white text-center leading-tight whitespace-pre-line pointer-events-none px-2"
+          className="absolute font-sans font-semibold text-white text-center leading-tight whitespace-pre-line pointer-events-none px-2"
           style={{
             left: `${activeX}%`,
             top: `${activeY}%`,
@@ -156,7 +154,6 @@ export function LiveSubtitleOverlay({
             fontSize: `${previewFont}px`,
             textShadow: shadow,
             maxWidth: "90%",
-            fontFamily: fontFamily ? `"${fontFamily}", system-ui, sans-serif` : undefined,
           }}
         >
           {text}

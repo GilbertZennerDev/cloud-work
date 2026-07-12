@@ -1,5 +1,5 @@
 import { fetchFile } from "@ffmpeg/util";
-import { emitFfmpegLog, getFFmpeg, onProgress, type ProgressCb } from "./client";
+import { getFFmpeg, onProgress, type ProgressCb } from "./client";
 import { formatSeconds } from "../subtitles/parseTime";
 
 export interface PerfOptions {
@@ -95,25 +95,6 @@ function scaleFilter(perf: PerfOptions): string | null {
   if (!h) return null;
   // Only downscale if source is larger; keep even dims for yuv420p.
   return `scale='min(iw,trunc(oh*a/2)*2)':'min(${h},ih)':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2`;
-}
-
-function escapeFilterOption(value: string): string {
-  return value
-    .replace(/\\/g, "\\\\")
-    .replace(/'/g, "\\'")
-    .replace(/:/g, "\\:")
-    .replace(/,/g, "\\,");
-}
-
-interface FontCandidate {
-  family: string;
-  bold: boolean;
-  source: "uploaded" | "fallback";
-}
-
-function subtitleFilter(subsName: string): string {
-  const filename = escapeFilterOption(subsName);
-  return `subtitles=filename='${filename}':fontsdir='/fonts'`;
 }
 
 /** Fast remux of an MPEG-TS blob into an MP4 container (no re-encode). */
@@ -332,546 +313,24 @@ export async function extractAudioMp3(
 
 const FONT_URL =
   "https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSans/hinted/ttf/NotoSans-Regular.ttf";
-const DEFAULT_FONT_FAMILY = "Noto Sans";
-// Track which font families have been installed on which ffmpeg instance.
-// A cancel/reload creates a new FFmpeg with a fresh virtual filesystem, and
-// the user may switch fonts mid-session — a Map per instance lets us install
-// on demand without re-writing the same file every call.
-const fontsInstalled = new WeakMap<object, Set<string>>();
+const FONT_FAMILY = "Noto Sans";
+// Track font install per ffmpeg instance. A cancel/reload creates a new
+// FFmpeg with a fresh virtual filesystem, so a module-level boolean would
+// falsely report the font as loaded and libass would silently render
+// nothing — subtitles disappear from the burned output.
+const fontLoadedFor = new WeakSet<object>();
 
-interface InstalledFontFile {
-  family: string;
-  path: string;
-  bytes: Uint8Array;
-}
-
-/**
- * Fetch font files into ffmpeg's /fonts dir. Idempotent per exact file.
- * Always installs the Noto Sans fallback so there is a guaranteed usable face.
- */
-async function ensureFont(
-  ffmpeg: Awaited<ReturnType<typeof getFFmpeg>>,
-  override?: { family: string; url: string; format: string },
-): Promise<{ fallback: InstalledFontFile; override?: InstalledFontFile }> {
-  let installed = fontsInstalled.get(ffmpeg);
-  if (!installed) {
-    installed = new Set();
-    fontsInstalled.set(ffmpeg, installed);
-  }
+async function ensureFont(ffmpeg: Awaited<ReturnType<typeof getFFmpeg>>) {
+  if (fontLoadedFor.has(ffmpeg)) return;
   try {
     await ffmpeg.createDir("/fonts");
   } catch {
     // already exists
   }
-  const writeOne = async (family: string, url: string, path: string): Promise<InstalledFontFile> => {
-    const bytes = await fetchFile(url) as Uint8Array;
-    const key = `${family}|${url}|${path}`;
-    if (!installed!.has(key)) {
-      // Re-write on first use of this exact file. Signed URLs may point to a
-      // different uploaded file with the same display family.
-      await ffmpeg.writeFile(path, bytes);
-      installed!.add(key);
-    }
-    return { family, path, bytes };
-  };
-  const fallback = await writeOne(DEFAULT_FONT_FAMILY, FONT_URL, "/fonts/NotoSans-Regular.ttf");
-  if (!override) return { fallback };
-
-  const safeName = override.family.replace(/[^a-zA-Z0-9-]+/g, "_") || "CustomFont";
-  const custom = await writeOne(override.family, override.url, `/fonts/${safeName}.${override.format}`);
-  return { fallback, override: custom };
+  const bytes = await fetchFile(FONT_URL);
+  await ffmpeg.writeFile("/fonts/NotoSans-Regular.ttf", bytes);
+  fontLoadedFor.add(ffmpeg);
 }
-
-function uniqueStrings(values: Array<string | null | undefined>): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const value of values) {
-    const cleaned = value?.replace(/\s+/g, " ").trim();
-    if (!cleaned || seen.has(cleaned)) continue;
-    seen.add(cleaned);
-    out.push(cleaned);
-  }
-  return out;
-}
-
-function uniqueFontCandidates(values: FontCandidate[]): FontCandidate[] {
-  const seen = new Set<string>();
-  const out: FontCandidate[] = [];
-  for (const value of values) {
-    const family = sanitizeAssFontFamily(value.family);
-    const key = `${family.toLowerCase()}|${value.bold ? 1 : 0}|${value.source}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({ ...value, family });
-  }
-  return out;
-}
-
-function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-}
-
-async function fontNameCandidates(fontBytes: Uint8Array | undefined, fallbackFamily: string): Promise<FontCandidate[]> {
-  const fallback = sanitizeAssFontFamily(fallbackFamily);
-  if (!fontBytes) return [{ family: fallback, bold: false, source: "fallback" }];
-  try {
-    const opentype = await import("opentype.js");
-    const font = opentype.parse(toArrayBuffer(fontBytes));
-    const nameTable = font.names as unknown as Record<string, Record<string, string> | undefined>;
-    const pick = (key: string) => {
-      const entry = nameTable[key];
-      if (!entry) return null;
-      return entry.en || Object.values(entry)[0] || null;
-    };
-    const preferredFamily = pick("preferredFamily");
-    const fontFamily = pick("fontFamily");
-    const fullName = pick("fullName");
-    const postScriptName = pick("postScriptName");
-    const preferredSubfamily = pick("preferredSubfamily");
-    const fontSubfamily = pick("fontSubfamily");
-    const familyWithPreferredStyle = preferredFamily && preferredSubfamily && !/^(regular|normal)$/i.test(preferredSubfamily)
-      ? `${preferredFamily} ${preferredSubfamily}`
-      : null;
-    const familyWithStyle = fontFamily && fontSubfamily && !/^(regular|normal)$/i.test(fontSubfamily)
-      ? `${fontFamily} ${fontSubfamily}`
-      : null;
-    const styleName = [preferredSubfamily, fontSubfamily, fullName, postScriptName].filter(Boolean).join(" ");
-    const prefersBold = /\b(bold|semibold|semi bold|demi|black|heavy|extrabold|extra bold)\b/i.test(styleName);
-
-    // Uploaded OTFs commonly match in ffmpeg by internal Full/PostScript names
-    // (for example "Whitney-Book") rather than the CSS display family.
-    const fontNames = uniqueStrings([
-      fallbackFamily,
-      fullName,
-      postScriptName,
-      familyWithPreferredStyle,
-      familyWithStyle,
-      preferredFamily,
-      fontFamily,
-    ]).map(sanitizeAssFontFamily);
-
-    const candidates = uniqueFontCandidates([
-      // Browser preview can synthesize semibold, but libass often refuses to
-      // match a regular/book OTF when ASS asks for Bold=1. Prefer normal
-      // weight for uploaded files, then try bold only if the font resolver says
-      // that is what the file wants.
-      ...fontNames.map((family) => ({ family, bold: prefersBold, source: "uploaded" as const })),
-      ...fontNames.map((family) => ({ family, bold: !prefersBold, source: "uploaded" as const })),
-    ]);
-    return candidates.length > 0 ? candidates : [{ family: fallback, bold: false, source: "fallback" }];
-  } catch {
-    return [{ family: fallback, bold: false, source: "uploaded" }];
-  }
-}
-
-interface DrawtextCue {
-  start: number;
-  end: number;
-  text: string;
-  xPct: number;
-  yPct: number;
-}
-
-interface DrawtextAssData {
-  width: number;
-  height: number;
-  fontSize: number;
-  outline: number;
-  cues: DrawtextCue[];
-}
-
-interface BurnVisibilityProbe {
-  timeSec: number;
-  referenceTimeSec: number | null;
-  xPct: number;
-  yPct: number;
-  cropWRatio: number;
-  cropHRatio: number;
-  cueStart: number;
-  cueEnd: number;
-}
-
-interface BurnVisibilityMetrics {
-  meanAbsDiff: number;
-  strongDiffFraction: number;
-  comparedBytes: number;
-  brightPixelFraction?: number;
-  edgePixelFraction?: number;
-  sampleTimeSec?: number;
-  referenceTimeSec?: number | null;
-}
-
-class BurnVerificationError extends Error {
-  metrics?: BurnVisibilityMetrics;
-  constructor(message: string, metrics?: BurnVisibilityMetrics) {
-    super(message);
-    this.name = "BurnVerificationError";
-    this.metrics = metrics;
-  }
-}
-
-function parseAssClock(value: string): number {
-  const m = value.trim().match(/^(\d+):(\d{2}):(\d{2})\.(\d{1,2})$/);
-  if (!m) return 0;
-  return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) + Number(m[4].padEnd(2, "0")) / 100;
-}
-
-function unescapeAssText(text: string): string {
-  return text
-    .replace(/\\N/g, "\n")
-    .replace(/\\\{/g, "{")
-    .replace(/\\\}/g, "}")
-    .replace(/\\\\/g, "\\");
-}
-
-function parseGeneratedAssForDrawtext(assText: string): DrawtextAssData | null {
-  const width = Number(assText.match(/^PlayResX:\s*(\d+)/m)?.[1] ?? 0);
-  const height = Number(assText.match(/^PlayResY:\s*(\d+)/m)?.[1] ?? 0);
-  const styleLine = assText.match(/^Style:\s*Default,(.*)$/m)?.[1];
-  if (!width || !height || !styleLine) return null;
-  const styleParts = styleLine.split(",");
-  const fontSize = Math.max(1, Number(styleParts[2] ?? 28));
-  const outline = Math.max(0, Number(styleParts[16] ?? 2));
-  const cues: DrawtextCue[] = [];
-
-  for (const line of assText.split(/\r?\n/)) {
-    if (!line.startsWith("Dialogue:")) continue;
-    const payload = line.slice("Dialogue:".length).trimStart();
-    let cursor = 0;
-    const fields: string[] = [];
-    for (let i = 0; i < 9; i++) {
-      const next = payload.indexOf(",", cursor);
-      if (next === -1) break;
-      fields.push(payload.slice(cursor, next));
-      cursor = next + 1;
-    }
-    if (fields.length !== 9) continue;
-    const rawText = payload.slice(cursor);
-    const pos = rawText.match(/^\{\\pos\(([-\d.]+),([-\d.]+)\)\}(.*)$/s);
-    if (!pos) continue;
-    const start = parseAssClock(fields[1]);
-    const end = parseAssClock(fields[2]);
-    if (end <= start) continue;
-    cues.push({
-      start,
-      end,
-      xPct: Math.max(0, Math.min(100, (Number(pos[1]) / width) * 100)),
-      yPct: Math.max(0, Math.min(100, (Number(pos[2]) / height) * 100)),
-      text: unescapeAssText(pos[3]),
-    });
-  }
-
-  return cues.length > 0 ? { width, height, fontSize, outline, cues } : null;
-}
-
-function timeInsideAnyCue(timeSec: number, cues: DrawtextCue[]): boolean {
-  return cues.some((cue) => timeSec >= cue.start && timeSec <= cue.end);
-}
-
-function chooseSubtitleFreeReferenceTime(cue: DrawtextCue, cues: DrawtextCue[]): number | null {
-  const beforeGap = cue.start > 0.18 ? Math.max(0, cue.start - Math.min(0.25, cue.start / 2)) : null;
-  const candidates = [
-    beforeGap,
-    cue.end + 0.18,
-    cue.start > 0.55 ? cue.start - 0.5 : null,
-    cue.end + 0.5,
-    cue.start > 1.05 ? cue.start - 1 : null,
-    cue.end + 1,
-  ];
-  for (const candidate of candidates) {
-    if (candidate === null || !isFinite(candidate) || candidate < 0) continue;
-    if (!timeInsideAnyCue(candidate, cues)) return candidate;
-  }
-  return null;
-}
-
-function firstVisibilityProbe(assText: string): BurnVisibilityProbe | null {
-  const parsed = parseGeneratedAssForDrawtext(assText);
-  if (!parsed) return null;
-  const cue = parsed.cues.find((c) => c.end > c.start && c.text.trim().length > 0);
-  if (!cue) return null;
-  const lines = cue.text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const longestLine = Math.max(1, ...lines.map((line) => line.length));
-  const lineCount = Math.max(1, lines.length);
-  const estimatedTextWidth = longestLine * parsed.fontSize * 0.72 + parsed.outline * 10;
-  const estimatedTextHeight = lineCount * parsed.fontSize * 1.85 + parsed.outline * 12;
-  return {
-    timeSec: Math.max(cue.start, Math.min(cue.end - 0.03, (cue.start + cue.end) / 2)),
-    referenceTimeSec: chooseSubtitleFreeReferenceTime(cue, parsed.cues),
-    xPct: cue.xPct,
-    yPct: cue.yPct,
-    cropWRatio: Math.max(0.22, Math.min(0.96, estimatedTextWidth / Math.max(1, parsed.width))),
-    cropHRatio: Math.max(0.12, Math.min(0.48, estimatedTextHeight / Math.max(1, parsed.height))),
-    cueStart: cue.start,
-    cueEnd: cue.end,
-  };
-}
-
-function probeCropFilter(probe: BurnVisibilityProbe, perf: PerfOptions, includeScale: boolean): string {
-  const sf = includeScale ? scaleFilter(perf) : null;
-  const x = (probe.xPct / 100).toFixed(5);
-  const y = (probe.yPct / 100).toFixed(5);
-  const w = probe.cropWRatio.toFixed(5);
-  const h = probe.cropHRatio.toFixed(5);
-  const crop = [
-    `crop=w='max(2,trunc(iw*${w}/2)*2)'`,
-    `h='max(2,trunc(ih*${h}/2)*2)'`,
-    `x='min(max(0,iw*${x}-ow/2),iw-ow)'`,
-    `y='min(max(0,ih*${y}-oh/2),ih-oh)'`,
-  ].join(":");
-  return [sf, crop].filter(Boolean).join(",");
-}
-
-async function extractProbeCrop(
-  ffmpeg: Awaited<ReturnType<typeof getFFmpeg>>,
-  inputName: string,
-  rawName: string,
-  probe: BurnVisibilityProbe,
-  perf: PerfOptions,
-  includeScale: boolean,
-): Promise<Uint8Array> {
-  try { await ffmpeg.deleteFile(rawName); } catch {}
-  try {
-    await ffmpeg.exec([
-      "-ss", probe.timeSec.toFixed(3),
-      "-i", inputName,
-      "-frames:v", "1",
-      "-vf", probeCropFilter(probe, perf, includeScale),
-      "-an",
-      "-f", "rawvideo",
-      "-pix_fmt", "rgb24",
-      "-y", rawName,
-    ]);
-    return await readOutputFile(ffmpeg, rawName, "Burn verification frame");
-  } finally {
-    try { await ffmpeg.deleteFile(rawName); } catch {}
-  }
-}
-
-function compareRawCrops(reference: Uint8Array, burned: Uint8Array): BurnVisibilityMetrics {
-  const n = Math.min(reference.length, burned.length);
-  if (n <= 0) return { meanAbsDiff: 0, strongDiffFraction: 0, comparedBytes: 0 };
-  let sum = 0;
-  let strong = 0;
-  for (let i = 0; i < n; i++) {
-    const d = Math.abs(reference[i] - burned[i]);
-    sum += d;
-    if (d >= 32) strong++;
-  }
-  return {
-    meanAbsDiff: sum / n,
-    strongDiffFraction: strong / n,
-    comparedBytes: n,
-  };
-}
-
-function subtitleSignal(crop: Uint8Array): Pick<BurnVisibilityMetrics, "brightPixelFraction" | "edgePixelFraction"> {
-  const pixels = Math.floor(crop.length / 3);
-  if (pixels <= 0) return { brightPixelFraction: 0, edgePixelFraction: 0 };
-  let bright = 0;
-  let edges = 0;
-  let previousLuma: number | null = null;
-  for (let i = 0; i < pixels; i++) {
-    const r = crop[i * 3] ?? 0;
-    const g = crop[i * 3 + 1] ?? 0;
-    const b = crop[i * 3 + 2] ?? 0;
-    const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    if (luma >= 205 && Math.max(r, g, b) - Math.min(r, g, b) <= 58) bright++;
-    if (previousLuma !== null && Math.abs(luma - previousLuma) >= 76) edges++;
-    previousLuma = luma;
-  }
-  return {
-    brightPixelFraction: bright / pixels,
-    edgePixelFraction: edges / Math.max(1, pixels - 1),
-  };
-}
-
-function subtitlesAreVisible(metrics: BurnVisibilityMetrics): boolean {
-  // The comparison is intentionally region-focused. Normal H.264 re-encode
-  // noise usually changes many bytes slightly; real white text + black outline
-  // changes a smaller subtitle-shaped area strongly.
-  const hasTextSignal =
-    (metrics.brightPixelFraction ?? 0) >= 0.0025 &&
-    (metrics.edgePixelFraction ?? 0) >= 0.006;
-  const hasVeryStrongTextSignal =
-    (metrics.brightPixelFraction ?? 0) >= 0.009 &&
-    (metrics.edgePixelFraction ?? 0) >= 0.012;
-  const changedFromReference = metrics.comparedBytes > 0 && (
-    metrics.meanAbsDiff >= 4.5 ||
-    metrics.strongDiffFraction >= 0.012 ||
-    (metrics.meanAbsDiff >= 2.5 && metrics.strongDiffFraction >= 0.004)
-  );
-  return (changedFromReference && hasTextSignal) || hasVeryStrongTextSignal;
-}
-
-async function verifyBurnedSubtitlePixels(
-  ffmpeg: Awaited<ReturnType<typeof getFFmpeg>>,
-  outputName: string,
-  assText: string,
-  token: string,
-): Promise<BurnVisibilityMetrics> {
-  const probe = firstVisibilityProbe(assText);
-  if (!probe) throw new BurnVerificationError("Could not build a subtitle visibility probe from ASS cues");
-  emitFfmpegLog(
-    `[BURN] Verification sample ${probe.timeSec.toFixed(2)}s` +
-      (probe.referenceTimeSec !== null ? ` vs ${probe.referenceTimeSec.toFixed(2)}s` : " with subtitle-region signal only"),
-  );
-  const outName = `verify_out_${token}.rgb`;
-  let burned: Uint8Array;
-  try {
-    burned = await extractProbeCrop(ffmpeg, outputName, outName, probe, {}, false);
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    throw new BurnVerificationError(`Burned MP4 verification could not extract the subtitle frame: ${detail}`);
-  }
-  const signal = subtitleSignal(burned);
-  let metrics: BurnVisibilityMetrics = {
-    meanAbsDiff: 0,
-    strongDiffFraction: 0,
-    comparedBytes: burned.length,
-    ...signal,
-    sampleTimeSec: probe.timeSec,
-    referenceTimeSec: probe.referenceTimeSec,
-  };
-
-  if (probe.referenceTimeSec !== null) {
-    const refName = `verify_ref_${token}.rgb`;
-    try {
-      const reference = await extractProbeCrop(
-        ffmpeg,
-        outputName,
-        refName,
-        { ...probe, timeSec: probe.referenceTimeSec },
-        {},
-        false,
-      );
-      metrics = {
-        ...compareRawCrops(reference, burned),
-        ...signal,
-        sampleTimeSec: probe.timeSec,
-        referenceTimeSec: probe.referenceTimeSec,
-      };
-    } catch (err) {
-      emitFfmpegLog(`[BURN] Verification reference frame unavailable; using subtitle-region signal only (${err instanceof Error ? err.message : String(err)})`);
-    }
-  }
-
-  if (!subtitlesAreVisible(metrics)) {
-    throw new BurnVerificationError(
-      `Burned MP4 verification failed: no visible subtitle signal in output (mean diff ${metrics.meanAbsDiff.toFixed(2)}, strong ${(metrics.strongDiffFraction * 100).toFixed(2)}%, bright ${((metrics.brightPixelFraction ?? 0) * 100).toFixed(2)}%, edge ${((metrics.edgePixelFraction ?? 0) * 100).toFixed(2)}%)`,
-      metrics,
-    );
-  }
-  return metrics;
-}
-
-function replaceAssStyleFont(assText: string, candidate: FontCandidate): string {
-  const safeFamily = sanitizeAssFontFamily(candidate.family);
-  return assText.replace(/^Style:\s*(.*)$/m, (_line, payload: string) => {
-    const parts = String(payload).split(",");
-    if (parts.length < 8) return `Style: ${payload}`;
-    parts[1] = safeFamily;
-    parts[7] = candidate.bold ? "1" : "0";
-    return `Style: ${parts.join(",")}`;
-  });
-}
-
-function fallbackFontCandidates(): FontCandidate[] {
-  return [
-    { family: DEFAULT_FONT_FAMILY, bold: true, source: "fallback" },
-    { family: DEFAULT_FONT_FAMILY, bold: false, source: "fallback" },
-  ];
-}
-
-function probeAss(candidate: FontCandidate): string {
-  const style = `Style: Default,${sanitizeAssFontFamily(candidate.family)},28,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,${candidate.bold ? 1 : 0},0,0,0,100,100,0,0,1,3,0,5,0,0,0,1`;
-  return [
-    "[Script Info]",
-    "ScriptType: v4.00+",
-    "WrapStyle: 2",
-    "ScaledBorderAndShadow: yes",
-    "PlayResX: 320",
-    "PlayResY: 180",
-    "",
-    "[V4+ Styles]",
-    "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-    style,
-    "",
-    "[Events]",
-    "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
-    "Dialogue: 0,0:00:00.00,0:00:00.10,Default,,0,0,0,,{\\pos(160,90)}font probe",
-    "",
-  ].join("\n");
-}
-
-function filenameFromPath(path: string): string {
-  return path.split("/").pop() ?? path;
-}
-
-function fontSelectLogs(logs: string[]): string[] {
-  return logs.filter((line) => /fontselect|font selection|select.*font/i.test(line));
-}
-
-function compactFontName(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
-}
-
-function logsMatchFontCandidate(
-  logs: string[],
-  candidate: FontCandidate,
-  override: InstalledFontFile | undefined,
-): boolean {
-  const lines = fontSelectLogs(logs);
-  if (candidate.source === "fallback" || !override) {
-    return lines.length === 0 || lines.some((line) => /NotoSans|Noto Sans/i.test(line));
-  }
-
-  const customFile = filenameFromPath(override.path).toLowerCase();
-  const customStem = customFile.replace(/\.[^.]+$/, "");
-  const compactCustomStem = compactFontName(customStem);
-  const compactCandidate = compactFontName(candidate.family);
-  return lines.some((line) => {
-    const lower = line.toLowerCase();
-    const compactLine = compactFontName(line);
-    if (lower.includes("notosans") || lower.includes("noto sans")) return false;
-    return lower.includes(customFile) ||
-      lower.includes(customStem) ||
-      (!!compactCustomStem && compactLine.includes(compactCustomStem)) ||
-      (!!compactCandidate && compactLine.includes(compactCandidate)) ||
-      /->\s*\/fonts\//i.test(line);
-  });
-}
-
-async function probeFontCandidate(
-  ffmpeg: Awaited<ReturnType<typeof getFFmpeg>>,
-  inputName: string,
-  probeName: string,
-  candidate: FontCandidate,
-  burnLogs: string[],
-  override: InstalledFontFile | undefined,
-): Promise<boolean> {
-  try { await ffmpeg.deleteFile(probeName); } catch {}
-  await ffmpeg.writeFile(probeName, new TextEncoder().encode(probeAss(candidate)));
-  const startLog = burnLogs.length;
-  try {
-    await ffmpeg.exec([
-      "-loglevel", "verbose",
-      "-i", inputName,
-      "-t", "0.10",
-      "-vf", subtitleFilter(probeName),
-      "-an",
-      "-f", "null",
-      "-",
-    ]);
-  } catch {
-    try { await ffmpeg.deleteFile(probeName); } catch {}
-    return false;
-  }
-  const logs = burnLogs.slice(startLog);
-  try { await ffmpeg.deleteFile(probeName); } catch {}
-  return logsMatchFontCandidate(logs, candidate, override);
-}
-
 
 export interface SubtitleStyle {
   /** Font size in pixels (relative to source video height in ASS PlayRes) */
@@ -886,8 +345,6 @@ export interface SubtitleStyle {
   videoWidth: number;
   /** Video height in pixels (used as ASS PlayResY). */
   videoHeight: number;
-  /** Optional font family override (must match a value installed via ensureFont). */
-  fontFamily?: string | null;
 }
 
 function assTime(seconds: number): string {
@@ -912,15 +369,15 @@ export interface AssCue { start: number; end: number; text: string; xPct?: numbe
 // Cache one measuring context per font-size so we don't recreate it per cue.
 let wrapCanvas: HTMLCanvasElement | null = null;
 let wrapCtx: CanvasRenderingContext2D | null = null;
-function getWrapCtx(fontSize: number, fontFamily: string): CanvasRenderingContext2D | null {
+function getWrapCtx(fontSize: number): CanvasRenderingContext2D | null {
   if (typeof document === "undefined") return null;
   if (!wrapCanvas) {
     wrapCanvas = document.createElement("canvas");
     wrapCtx = wrapCanvas.getContext("2d");
   }
   if (!wrapCtx) return null;
-  // Match burn font (Bold=1) and preview (`font-semibold`).
-  wrapCtx.font = `bold ${fontSize}px "${fontFamily}", system-ui, sans-serif`;
+  // Match burn font (Noto Sans, Bold=1) and preview (`font-semibold`).
+  wrapCtx.font = `bold ${fontSize}px "Noto Sans", system-ui, sans-serif`;
   return wrapCtx;
 }
 
@@ -930,8 +387,8 @@ function getWrapCtx(fontSize: number, fontFamily: string): CanvasRenderingContex
  * user typed. Falls back to a char-count heuristic outside the browser
  * (worker/SSR) so results stay deterministic.
  */
-function wrapTextForAss(text: string, fontSize: number, maxWidthPx: number, fontFamily: string): string {
-  const ctx = getWrapCtx(fontSize, fontFamily);
+function wrapTextForAss(text: string, fontSize: number, maxWidthPx: number): string {
+  const ctx = getWrapCtx(fontSize);
   const fallbackCharsPerLine = Math.max(6, Math.floor(maxWidthPx / (fontSize * 0.55)));
 
   const wrapLine = (line: string): string => {
@@ -968,13 +425,10 @@ export function cuesToAss(cues: AssCue[], style: SubtitleStyle): string {
   const outline = Math.max(0, style.outline);
   const defaultX = Math.round((style.xPct / 100) * w);
   const defaultY = Math.round((style.yPct / 100) * h);
-  const fontFamily = style.fontFamily && style.fontFamily.trim().length > 0
-    ? sanitizeAssFontFamily(style.fontFamily)
-    : DEFAULT_FONT_FAMILY;
 
   // Alignment=5 => middle-center anchor, so \pos(x,y) places the centre of the text at (x,y).
   const styleLine =
-    `Style: Default,${fontFamily},${style.fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H64000000,` +
+    `Style: Default,${FONT_FAMILY},${style.fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H64000000,` +
     `1,0,0,0,100,100,0,0,1,${outline},0,5,0,0,0,1`;
 
   // Match the preview: captions in <CuePreview>/<LiveSubtitleOverlay> wrap
@@ -987,7 +441,7 @@ export function cuesToAss(cues: AssCue[], style: SubtitleStyle): string {
     .map((c) => {
       const px = typeof c.xPct === "number" ? Math.round((c.xPct / 100) * w) : defaultX;
       const py = typeof c.yPct === "number" ? Math.round((c.yPct / 100) * h) : defaultY;
-      const wrapped = wrapTextForAss(c.text, style.fontSize, maxWidthPx, fontFamily);
+      const wrapped = wrapTextForAss(c.text, style.fontSize, maxWidthPx);
       return `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Default,,0,0,0,,{\\pos(${px},${py})}${escapeAssText(wrapped)}`;
     })
     .join("\n");
@@ -1011,176 +465,49 @@ export function cuesToAss(cues: AssCue[], style: SubtitleStyle): string {
   ].join("\n");
 }
 
-export interface FontOverride {
-  family: string;
-  url: string;
-  format: string;
-}
-
-function isBurnCompatibleFont(format: string): boolean {
-  return format === "ttf" || format === "otf";
-}
-
-function sanitizeAssFontFamily(family: string): string {
-  const cleaned = family
-    .replace(/[{},\\]/g, " ")
-    .replace(/,/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return cleaned || DEFAULT_FONT_FAMILY;
-}
-
 export async function burnSubtitles(
   video: File | Blob,
   assText: string,
   onP?: ProgressCb,
   perf: PerfOptions = {},
-  fontOverride?: FontOverride,
 ): Promise<Uint8Array> {
-  // Guard against silent no-op burns: an ASS with zero Dialogue lines yields
-  // an output MP4 with no captions, which historically looked like "the burn
-  // is broken" when in fact cues were filtered upstream.
-  const dialogueCount = (assText.match(/^Dialogue:/gm) ?? []).length;
-  if (dialogueCount === 0) {
-    throw new Error("Subtitle burn-in aborted: no cues to render (empty ASS)");
-  }
-
   const ffmpeg = await getFFmpeg();
   const off = onP ? onProgress(ffmpeg, onP) : () => {};
   const token = tempToken();
   const inputName = `burn_input_${token}.mp4`;
   const subsName = `subs_${token}.ass`;
   const outputName = `burned_${token}.mp4`;
-  const burnFont = fontOverride && isBurnCompatibleFont(fontOverride.format) ? fontOverride : undefined;
-  const installedFont = await ensureFont(ffmpeg, burnFont);
+  await ensureFont(ffmpeg);
   await ffmpeg.writeFile(inputName, await fetchFile(video));
-
-  // Capture ffmpeg logs during the burn so libass warnings ("Font 'X' not
-  // found", "Could not open font", etc.) surface in the Cutter's log panel.
-  const burnLogs: string[] = [];
-  const { onFfmpegLog } = await import("./client");
-  const unsubscribeLog = onFfmpegLog((msg) => {
-    burnLogs.push(msg);
-    if (burnLogs.length > 500) burnLogs.shift();
-  });
-
-
+  await ffmpeg.writeFile(subsName, new TextEncoder().encode(assText));
+  const sf = scaleFilter(perf);
+  const vf = sf
+    ? `${sf},ass=${subsName}:fontsdir=/fonts`
+    : `ass=${subsName}:fontsdir=/fonts`;
   try {
-    const runBurn = async (vf: string, label: string, verifyAss: string) => {
-      try { await ffmpeg.deleteFile(outputName); } catch {}
-      emitFfmpegLog(`[BURN] Running ${label}`);
-      await ffmpeg.exec([
-        "-i", inputName,
-        "-vf", vf,
-        ...encodeArgs(perf),
-        "-c:a", "aac", "-b:a", perf.lowPerf ? "96k" : "128k",
-        ...threadArgs(perf),
-        "-avoid_negative_ts", "make_zero",
-        "-movflags", "+faststart",
-        "-y", outputName,
-      ]);
-      emitFfmpegLog("[BURN] MP4 created, verifying subtitle pixels…");
-      const metrics = await verifyBurnedSubtitlePixels(ffmpeg, outputName, verifyAss, token);
-      emitFfmpegLog(
-        `[BURN] Verified visible subtitles (mean diff ${metrics.meanAbsDiff.toFixed(2)}, strong ${(metrics.strongDiffFraction * 100).toFixed(2)}%, bright ${((metrics.brightPixelFraction ?? 0) * 100).toFixed(2)}%)`,
-      );
-      return await readOutputFile(ffmpeg, outputName, "Subtitle burn-in");
-    };
-
     // NOTE: Do NOT combine `-map 0:v:0` with `-vf` here. When the video
     // stream is explicitly mapped, ffmpeg.wasm's simple-filter (`-vf`) path
     // can be bypassed and the video passes through un-filtered — the output
     // renders without any burned subtitles. Rely on default stream
     // selection (best video + best audio) so `-vf` is applied correctly.
-
-    // NOTE: We intentionally keep the burn path deterministic and libass-only.
-    // ffmpeg.wasm is prone to memory crashes after many complex retries, so we
-    // try the matched uploaded face once, then the built-in Noto fallback.
-
-    const sf = scaleFilter(perf);
-    const firstProbe = firstVisibilityProbe(assText);
-    emitFfmpegLog(
-      `[BURN] ASS cues: ${dialogueCount}${firstProbe ? `, first visibility check at ${firstProbe.timeSec.toFixed(2)}s near ${Math.round(firstProbe.xPct)},${Math.round(firstProbe.yPct)}` : ""}`,
-    );
-    emitFfmpegLog(
-      fontOverride
-        ? `[BURN] Selected font: ${fontOverride.family} (${fontOverride.format})${burnFont ? " with uploaded file" : " not burn-compatible; using built-in"}`
-        : `[BURN] Selected font: ${DEFAULT_FONT_FAMILY} built-in`,
-    );
-    const candidateFamilies = await fontNameCandidates(
-      installedFont.override?.bytes,
-      burnFont?.family ?? DEFAULT_FONT_FAMILY,
-    );
-    const candidates = uniqueFontCandidates(
-      installedFont.override
-        ? [...candidateFamilies, ...fallbackFontCandidates()]
-        : fallbackFontCandidates(),
-    );
-    const probeName = `font_probe_${token}.ass`;
-
-    let selected = candidates[0] ?? fallbackFontCandidates()[0];
-    if (installedFont.override) {
-      emitFfmpegLog(`[FONT] Checking ${candidates.length} burn font candidates for ${burnFont?.family ?? "uploaded font"}`);
-      for (const candidate of candidates.filter((c) => c.source === "uploaded")) {
-        emitFfmpegLog(`[FONT] Trying ${candidate.family}${candidate.bold ? " (bold)" : ""}`);
-        if (await probeFontCandidate(ffmpeg, inputName, probeName, candidate, burnLogs, installedFont.override)) {
-          selected = candidate;
-          emitFfmpegLog(`[FONT] Matched ${candidate.family}${candidate.bold ? " (bold)" : ""} from ${filenameFromPath(installedFont.override.path)}`);
-          break;
-        }
-      }
-      if (selected.source !== "uploaded") {
-        selected = fallbackFontCandidates()[0];
-        emitFfmpegLog(`[FONT] Uploaded font could not be matched by libass; falling back to ${DEFAULT_FONT_FAMILY}`);
-      }
-    } else {
-      emitFfmpegLog(`[FONT] Using ${DEFAULT_FONT_FAMILY} built-in`);
-    }
-
-    let lastError: unknown = null;
-    const finalCandidates = uniqueFontCandidates([
-      selected,
-      ...(selected.source === "uploaded" ? [fallbackFontCandidates()[0]] : []),
+    await ffmpeg.exec([
+      "-i", inputName,
+      "-vf", vf,
+      ...encodeArgs(perf),
+      "-c:a", "aac", "-b:a", perf.lowPerf ? "96k" : "128k",
+      ...threadArgs(perf),
+      "-movflags", "+faststart",
+      "-y", outputName,
     ]);
-    for (const candidate of finalCandidates) {
-      const safeAss = replaceAssStyleFont(assText, candidate);
-      await ffmpeg.writeFile(subsName, new TextEncoder().encode(safeAss));
-      const subsFilter = subtitleFilter(subsName);
-      const variants = sf
-        ? [["setpts=PTS-STARTPTS", sf, subsFilter].join(",")]
-        : [["setpts=PTS-STARTPTS", subsFilter].join(",")];
-      for (let i = 0; i < variants.length; i++) {
-        try {
-          emitFfmpegLog(`[FONT] Burning with ${candidate.family}${candidate.bold ? " (bold)" : ""}`);
-          return await runBurn(variants[i], `${candidate.family}${candidate.bold ? " (bold)" : ""} · graph ${i + 1}/${variants.length}`, safeAss);
-        } catch (err) {
-          lastError = err;
-          if (err instanceof BurnVerificationError) {
-            emitFfmpegLog(`[BURN] Verification failed for ${candidate.family}: ${err.message}`);
-            if (candidate.source === "uploaded") emitFfmpegLog("[BURN] Retrying with built-in fallback font…");
-            continue;
-          }
-          emitFfmpegLog(`[BURN] Burn attempt failed for ${candidate.family}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-    }
-    throw lastError ?? new Error("Subtitle burn-in failed");
-  } catch (err) {
-    // Attach the last few libass/ffmpeg log lines to the error so the UI
-    // shows *why* the burn failed instead of a bare "exited with code 1".
-    const tail = burnLogs.slice(-20).join("\n");
-    const base = err instanceof Error ? err.message : String(err);
-    throw new Error(tail ? `${base}\n---\n${tail}` : base);
+
+    return await readOutputFile(ffmpeg, outputName, "Subtitle burn-in");
   } finally {
     off();
-    unsubscribeLog();
-
     try { await ffmpeg.deleteFile(inputName); } catch {}
     try { await ffmpeg.deleteFile(subsName); } catch {}
     try { await ffmpeg.deleteFile(outputName); } catch {}
   }
 }
-
 
 /** Read intrinsic width/height from a video File/Blob using a hidden element. */
 export async function getVideoDimensions(src: File | Blob): Promise<{ width: number; height: number }> {

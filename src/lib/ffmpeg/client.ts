@@ -6,28 +6,19 @@ import wasmURL from "@ffmpeg/core/wasm?url";
 // to transform ffmpeg-core.js as app source and avoids external CDN/CORS fetches.
 
 let ffmpegPromise: Promise<FFmpeg> | null = null;
-const logListeners = new Set<(msg: string) => void>();
+let logListener: ((msg: string) => void) | null = null;
 
-/** Subscribe to ffmpeg log lines. Returns an unsubscribe function. */
-export function onFfmpegLog(cb: (msg: string) => void): () => void {
-  logListeners.add(cb);
-  return () => { logListeners.delete(cb); };
+export function onFfmpegLog(cb: (msg: string) => void) {
+  logListener = cb;
 }
-
-/** Emit an app-level processing log line through the same Cutter log stream. */
-export function emitFfmpegLog(msg: string): void {
-  for (const cb of logListeners) cb(msg);
-}
-
 
 export async function getFFmpeg(): Promise<FFmpeg> {
   if (ffmpegPromise) return ffmpegPromise;
   ffmpegPromise = (async () => {
     const ffmpeg = new FFmpeg();
     ffmpeg.on("log", ({ message }) => {
-      emitFfmpegLog(message);
+      logListener?.(message);
     });
-
     try {
       await ffmpeg.load({ coreURL, wasmURL });
       return ffmpeg;

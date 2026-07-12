@@ -1,52 +1,39 @@
-## Plan: fix `clip_subbed.mp4` burn-in by removing the broken verification path and making the burn pipeline deterministic
+## Root cause
 
-1. **Fix the immediate verifier crash**
-   - Replace the invalid verification crop filter syntax (`crop:w=...`) with FFmpeg-compatible syntax (`crop=...:...:...:...`).
-   - Stop reporting `mean diff 0.00` after the verifier itself failed; verification failures and verifier-extraction failures should be separate log messages.
+The per-block preview and the final burned video differ because of **line wrapping**, not font size:
 
-2. **Stop using the source video as the verifier baseline when it cannot match the burned output**
-   - The current comparison extracts the reference crop from `burn_input` with the output scale applied, then compares it to `burned.mp4` without guaranteeing same seek timing, dimensions, color path, or frame availability.
-   - Change verification to compare two frames from the same generated output:
-     - one frame inside the first subtitle cue region
-     - one nearby frame outside any subtitle cue, or a nearby subtitle-free crop/time
-   - This verifies visible subtitle pixels without depending on a separate plain input decode path.
+- **Preview** (`CuePreview.tsx`, `LiveSubtitleOverlay.tsx`) renders each caption inside a CSS box with `max-width: 92%` and `whitespace-pre-line`. Long cues wrap automatically onto 2–3 lines.
+- **Burn-in** (`cuesToAss` in `src/lib/ffmpeg/operations.ts`) writes the ASS header with `WrapStyle: 2`, which means "no automatic wrapping — only explicit `\N` breaks the line". Long cues render as one very wide single line that spills far past what the preview showed.
 
-3. **Make cue timing match the clip being burned**
-   - For full pipeline, keep cue times only if the clip starts at zero after cutting.
-   - For selected-cue export, keep the current remap-to-zero logic.
-   - Add a guard/log that the first burn cue starts within the actual clip duration; if not, fail before FFmpeg runs with a clear pipeline error.
+Font-size scaling was already fixed last turn, so short cues already match. The remaining mismatch is 100% due to wrapping. Bold/font-family differences are negligible visually.
 
-4. **Simplify burn attempts to avoid WASM memory crashes**
-   - Remove unused/fragile `drawtext` fallback code paths from `operations.ts`; keep libass subtitles only.
-   - Do not retry many complex graph/font combinations after the FFmpeg worker shows memory instability.
-   - Try a small, deterministic set:
-     1. subtitle burn at output dimensions
-     2. scale then subtitle burn only when downscaling is requested
-     3. built-in Noto fallback only if the selected uploaded font fails
+## Fix
 
-5. **Make metadata reading robust**
-   - Replace `getVideoDimensions(video)` browser metadata dependency in the burn request with a fallback:
-     - try browser metadata first
-     - if it fails, derive dimensions with FFmpeg probing/snapshot fallback or use the known source dimensions already cached in state
-   - This prevents `Could not read video metadata` from aborting burns when the Blob is valid but the browser cannot load metadata quickly.
+Pre-wrap the cue text in JavaScript before it goes into the ASS file, using the exact same width budget the preview uses (92 % of source video width) and the same per-cue font size. Insert `\N` at the chosen break points and keep `WrapStyle: 2` so ffmpeg respects our breaks verbatim.
 
-6. **Improve logs so the next failure is actionable**
-   - Log: clip duration basis, first cue time range, ASS PlayRes, selected font file availability, chosen burn graph, and verification sample times.
-   - If the output has no visible subtitles, say whether the issue is cue timing, subtitle rendering, or verifier extraction — not just “verification failed.”
+Steps in `src/lib/ffmpeg/operations.ts`:
 
-## Technical files to update
+1. Add a helper `wrapTextForAss(text, fontSizePx, maxWidthPx)` that:
+   - Uses an offscreen `<canvas>` 2D context with font `bold ${fontSize}px "Noto Sans", sans-serif` (matches burn Bold=1 + Noto Sans and closely matches the preview's `font-semibold`).
+   - Greedy word-wrap: builds lines word-by-word, starts a new line when `measureText(line + " " + word).width > maxWidthPx`.
+   - Preserves any explicit `\n` the user typed as hard breaks.
+   - Returns the text with `\n` between wrapped lines; the existing `escapeAssText` already converts `\n` → `\N`.
 
-- `src/lib/ffmpeg/operations.ts`
-  - crop filter generation
-  - verification extraction/comparison
-  - burn attempt loop
-  - metadata/duration helpers if needed
-- `src/routes/index.tsx`
-  - cue timing/dimension guards in `burnClipWithCurrentSettings`
-  - use cached dimensions as a fallback
+2. In `cuesToAss`, for each cue compute `maxWidthPx = Math.round(w * 0.92)` (same 92 % the preview uses) and pass the cue's effective font size (currently the shared `style.fontSize` — per-cue font override isn't in the model, so shared size is correct).
 
-## Validation
+3. Guard for SSR / no-canvas: if `typeof document === "undefined"` or `getContext("2d")` returns null, fall back to a character-count heuristic (`~ maxWidthPx / (fontSize * 0.55)` chars per line) so the burn worker path stays deterministic.
 
-- Reproduce with existing cues/local clip only; do not re-run LuxASR.
-- Verify that `clip_subbed.mp4` is only exposed after subtitles are visibly detected.
-- Confirm the built-in Noto path still works and uploaded `.otf` no longer gets hidden by a pipeline/verification bug.
+4. Keep `WrapStyle: 2` (respect our explicit breaks; libass won't add its own).
+
+No changes to the preview components — the preview is what the user is anchoring on, so we make the burn match it, not the other way around.
+
+## Verification
+
+- Typecheck with `tsgo --noEmit`.
+- Manually: a long cue that wraps to 3 lines in the transcript-row preview should burn as the same 3 lines at the same positions in the exported MP4.
+
+## Out of scope
+
+- Per-cue font-size overrides (not in the data model today).
+- Switching the preview font to Noto Sans WOFF (system sans is visually close enough; would add a font download to every list row).
+- Changing wrap width from 92 % (matches current preview `max-width`).
