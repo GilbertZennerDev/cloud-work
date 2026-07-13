@@ -526,13 +526,14 @@ function Dashboard() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("fonts")
-        .select("id,family,format,is_default")
+        .select("id,family,format,is_default,storage_path")
         .eq("status", "ready")
         .order("family", { ascending: true });
       if (error) throw error;
-      return data as { id: string; family: string; format: string; is_default: boolean }[];
+      return data as { id: string; family: string; format: string; is_default: boolean; storage_path: string }[];
     },
   });
+
   useEffect(() => {
     if (subFont !== "default" || !fontsListQuery.data) return;
     const def = fontsListQuery.data.find((f) => f.is_default);
@@ -1113,6 +1114,7 @@ function Dashboard() {
         moveToStage("burning");
         setProgress(0);
         const dims = await getVideoDimensions(workingVideo);
+        const customFontRow = subFont !== "default" ? fontsListQuery.data?.find((f) => f.family === subFont) : undefined;
         const ass = cuesToAss(workingCues, {
           fontSize,
           outline: subOutline,
@@ -1120,8 +1122,15 @@ function Dashboard() {
           yPct: subY,
           videoWidth: dims.width,
           videoHeight: dims.height,
-        });
-        const subbed = await burnSubtitles(workingVideo, ass, setProgress, { lowPerf: effLowPerf, maxHeight: effMaxHeight });
+        }, customFontRow?.family);
+        const subbed = await burnSubtitles(
+          workingVideo,
+          ass,
+          setProgress,
+          { lowPerf: effLowPerf, maxHeight: effMaxHeight },
+          customFontRow ? { family: customFontRow.family, storagePath: customFontRow.storage_path, format: customFontRow.format } : undefined,
+        );
+
         checkCancel();
         setSubbedBlob(new Blob([subbed as BlobPart], { type: "video/mp4" }));
         setProgress(1);
@@ -1360,6 +1369,7 @@ function Dashboard() {
       moveToStage("burning");
       setProgress(0);
       const dims = await getVideoDimensions(clip);
+      const customFontRow = subFont !== "default" ? fontsListQuery.data?.find((f) => f.family === subFont) : undefined;
       const ass = cuesToAss(remapped, {
         fontSize,
         outline: subOutline,
@@ -1367,8 +1377,15 @@ function Dashboard() {
         yPct: subY,
         videoWidth: dims.width,
         videoHeight: dims.height,
-      });
-      const subbed = await burnSubtitles(clip, ass, setProgress, { lowPerf: effLowPerf, maxHeight: effMaxHeight });
+      }, customFontRow?.family);
+      const subbed = await burnSubtitles(
+        clip,
+        ass,
+        setProgress,
+        { lowPerf: effLowPerf, maxHeight: effMaxHeight },
+        customFontRow ? { family: customFontRow.family, storagePath: customFontRow.storage_path, format: customFontRow.format } : undefined,
+      );
+
       checkCancel();
       setSubbedBlob(new Blob([subbed as BlobPart], { type: "video/mp4" }));
       setProgress(1);

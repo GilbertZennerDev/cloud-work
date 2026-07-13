@@ -314,23 +314,63 @@ export async function extractAudioMp3(
 const FONT_URL =
   "https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSans/hinted/ttf/NotoSans-Regular.ttf";
 const FONT_FAMILY = "Noto Sans";
+
+export interface CustomFont {
+  /** ASS Fontname — must match the font's actual family name. */
+  family: string;
+  /** Path inside the private `fonts` Supabase storage bucket. */
+  storagePath: string;
+  /** File extension (ttf | otf | woff | woff2). */
+  format: string;
+  /** Optional pre-fetched bytes; if omitted, downloaded from Supabase storage. */
+  bytes?: Uint8Array;
+}
+
 // Track font install per ffmpeg instance. A cancel/reload creates a new
-// FFmpeg with a fresh virtual filesystem, so a module-level boolean would
+// FFmpeg with a fresh virtual filesystem, so a module-level set would
 // falsely report the font as loaded and libass would silently render
 // nothing — subtitles disappear from the burned output.
-const fontLoadedFor = new WeakSet<object>();
+const baseFontLoadedFor = new WeakSet<object>();
+const customFontsLoadedFor = new WeakMap<object, Set<string>>();
 
-async function ensureFont(ffmpeg: Awaited<ReturnType<typeof getFFmpeg>>) {
-  if (fontLoadedFor.has(ffmpeg)) return;
-  try {
-    await ffmpeg.createDir("/fonts");
-  } catch {
-    // already exists
-  }
-  const bytes = await fetchFile(FONT_URL);
-  await ffmpeg.writeFile("/fonts/NotoSans-Regular.ttf", bytes);
-  fontLoadedFor.add(ffmpeg);
+function sanitizeFontFile(name: string) {
+  return name.replace(/[^A-Za-z0-9._-]+/g, "_");
 }
+
+async function ensureFont(
+  ffmpeg: Awaited<ReturnType<typeof getFFmpeg>>,
+  custom?: CustomFont,
+) {
+  if (!baseFontLoadedFor.has(ffmpeg)) {
+    try {
+      await ffmpeg.createDir("/fonts");
+    } catch {
+      // already exists
+    }
+    const bytes = await fetchFile(FONT_URL);
+    await ffmpeg.writeFile("/fonts/NotoSans-Regular.ttf", bytes);
+    baseFontLoadedFor.add(ffmpeg);
+  }
+  if (!custom) return;
+  const key = `${custom.family}::${custom.storagePath}`;
+  let loaded = customFontsLoadedFor.get(ffmpeg);
+  if (!loaded) {
+    loaded = new Set();
+    customFontsLoadedFor.set(ffmpeg, loaded);
+  }
+  if (loaded.has(key)) return;
+  let bytes = custom.bytes;
+  if (!bytes) {
+    const { supabase } = await import("@/integrations/supabase/client");
+    const { data, error } = await supabase.storage.from("fonts").download(custom.storagePath);
+    if (error || !data) throw new Error(`Failed to download font: ${error?.message ?? "unknown"}`);
+    bytes = new Uint8Array(await data.arrayBuffer());
+  }
+  const filename = `/fonts/${sanitizeFontFile(custom.family)}.${custom.format}`;
+  await ffmpeg.writeFile(filename, bytes);
+  loaded.add(key);
+}
+
 
 export interface SubtitleStyle {
   /** Font size in pixels (relative to source video height in ASS PlayRes) */
@@ -419,17 +459,19 @@ function wrapTextForAss(text: string, fontSize: number, maxWidthPx: number): str
     .join("\n");
 }
 
-export function cuesToAss(cues: AssCue[], style: SubtitleStyle): string {
+export function cuesToAss(cues: AssCue[], style: SubtitleStyle, fontFamily?: string): string {
   const w = Math.max(1, Math.round(style.videoWidth));
   const h = Math.max(1, Math.round(style.videoHeight));
   const outline = Math.max(0, style.outline);
   const defaultX = Math.round((style.xPct / 100) * w);
   const defaultY = Math.round((style.yPct / 100) * h);
+  const family = fontFamily && fontFamily.trim() ? fontFamily : FONT_FAMILY;
 
   // Alignment=5 => middle-center anchor, so \pos(x,y) places the centre of the text at (x,y).
   const styleLine =
-    `Style: Default,${FONT_FAMILY},${style.fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H64000000,` +
+    `Style: Default,${family},${style.fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H64000000,` +
     `1,0,0,0,100,100,0,0,1,${outline},0,5,0,0,0,1`;
+
 
   // Match the preview: captions in <CuePreview>/<LiveSubtitleOverlay> wrap
   // inside a box that's ~92% of the video width. libass with WrapStyle=2
@@ -470,6 +512,7 @@ export async function burnSubtitles(
   assText: string,
   onP?: ProgressCb,
   perf: PerfOptions = {},
+  customFont?: CustomFont,
 ): Promise<Uint8Array> {
   const ffmpeg = await getFFmpeg();
   const off = onP ? onProgress(ffmpeg, onP) : () => {};
@@ -477,7 +520,8 @@ export async function burnSubtitles(
   const inputName = `burn_input_${token}.mp4`;
   const subsName = `subs_${token}.ass`;
   const outputName = `burned_${token}.mp4`;
-  await ensureFont(ffmpeg);
+  await ensureFont(ffmpeg, customFont);
+
   await ffmpeg.writeFile(inputName, await fetchFile(video));
   await ffmpeg.writeFile(subsName, new TextEncoder().encode(assText));
   const sf = scaleFilter(perf);

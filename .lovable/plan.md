@@ -1,53 +1,52 @@
 ## Goal
 
-Add a Fonts manager where uploaded font files land **as full binary content** in the private `fonts` storage bucket, so we can later fetch the actual file bytes (e.g. to feed ffmpeg's `/fonts` dir for burn-in). Today the `fonts` table + `fonts` bucket exist but no upload UI exists, so nothing ever writes real bytes.
+Use the font the user picks in the Cutter's new Font dropdown when ffmpeg burns subtitles, matching the shape:
 
-## Where
+```
+ass=subs.ass:fontsdir=/fonts   +   Style ...,Fontname=<FamilyFromRow>,...
+```
 
-New Fonts section on `src/routes/admin.tsx` (super-admin only, matches existing gating). No changes to other routes.
+Today `burnSubtitles` always writes only `NotoSans-Regular.ttf` to `/fonts` and `cuesToAss` hardcodes `FONT_FAMILY = "Noto Sans"` in the ASS style line, so the dropdown selection is silently ignored.
 
-## Upload flow (client-side, private bucket)
+## Changes
 
-For each accepted file (`.ttf`, `.otf`, `.woff`, `.woff2`):
+### 1. `src/lib/ffmpeg/operations.ts`
 
-1. Derive `family` from filename (strip extension, replace `_`/`-` runs with spaces), `format` from extension, `size_bytes` from `file.size`.
-2. `storage_path = ${user.id}/${crypto.randomUUID()}-${safeName}`.
-3. `supabase.storage.from("fonts").upload(storage_path, file, { contentType: file.type || "font/*", upsert: false })` — this streams the **actual File** object, so the bucket object contains the exact bytes of the uploaded file (verifiable later via `download()` / signed URL).
-4. On success, `supabase.from("fonts").insert({ family, original_filename: file.name, storage_path, format, size_bytes, status: "ready", uploaded_by: user.id })`.
-5. On DB-insert failure, roll back with `storage.from("fonts").remove([storage_path])` so we never leave orphaned objects.
+- Add a new type describing a custom font to install:
+  ```ts
+  export interface CustomFont {
+    family: string;         // used as ASS Fontname
+    storagePath: string;    // path inside the `fonts` bucket
+    format: string;         // ttf | otf | woff | woff2
+    bytes?: Uint8Array;     // optional pre-fetched content
+  }
+  ```
+- Extend `ensureFont(ffmpeg, custom?)`:
+  - Always ensures `/fonts` exists and the bundled Noto Sans fallback is present (kept as safety net if libass can't resolve the custom family).
+  - When `custom` is provided, write its bytes to `/fonts/<sanitizedFamily>.<format>`. Cache by `(ffmpeg, family+storagePath)` in a `WeakMap<object, Set<string>>` so repeat burns skip the download.
+  - If `custom.bytes` isn't supplied, download from Supabase: `supabase.storage.from("fonts").download(storagePath)` → `arrayBuffer()` → `Uint8Array`. Import `supabase` from `@/integrations/supabase/client`.
+- Extend `cuesToAss(cues, style, fontFamily?)`: use `fontFamily ?? FONT_FAMILY` in the `Style: Default,<font>,...` line. Also update `getWrapCtx` to accept the family so wrap widths stay consistent with the preview (falls back to Noto Sans when none).
+- Extend `burnSubtitles(video, assText, onP?, perf?, customFont?)`: pass `customFont` through to `ensureFont`. `fontsdir=/fonts` stays as is — libass will find the new file there.
 
-Upload queue runs files sequentially with per-file progress + toast; a shared React Query `["fonts"]` list is invalidated after each success.
+### 2. `src/routes/index.tsx`
 
-## List / manage
+- Build a `resolveCustomFont()` helper right before each `burnSubtitles` call:
+  - If `subFont === "default"` → pass `undefined`.
+  - Otherwise find the row in `fontsListQuery.data` by `family === subFont`; return `{ family: row.family, storagePath: row.storage_path, format: row.format }`.
+- Pass the resolved font to both `cuesToAss(..., subFont === "default" ? undefined : subFont)` and `burnSubtitles(..., customFont)` at the two existing burn sites (~lines 1116/1124 and 1363/1371).
+- No change to the dropdown UI itself; `subFont` already holds the family string.
 
-- `useQuery(["fonts"])` → `select * from fonts order by created_at desc`.
-- Row shows: family, format badge, size (KB/MB), uploaded date, "Default" toggle, Delete button.
-- **Default toggle**: sets `is_default=true` on the row; a small server function (or a two-step client update wrapped in a transaction-ish sequence) first clears all `is_default=true` then sets the chosen row. Uses the existing partial-unique index `fonts_only_one_default`. Since RLS only lets the uploader update their own row, the toggle is disabled for rows owned by other admins and shows a hint. (Out of scope: cross-admin default management.)
-- **Delete**: `storage.remove([storage_path])` then `delete from fonts where id=…`. RLS already restricts to uploader.
+### 3. No DB / storage / RLS changes
 
-## Storage bucket policies
-
-The `fonts` bucket already exists and is private. Add RLS on `storage.objects` (via migration in build mode) so authenticated users can `INSERT`/`SELECT`/`DELETE` inside `bucket_id = 'fonts'` scoped to their own top-level folder (`auth.uid()::text = (storage.foldername(name))[1]`). Needed because private buckets have no default write policy.
-
-## Reading the file content later (out of scope for this task, but the plan enables it)
-
-- Client: `supabase.storage.from("fonts").download(storage_path)` → `Blob` → `ArrayBuffer` → `ffmpeg.writeFile("/fonts/<family>.<ext>", bytes)`.
-- Server (worker/burn): server-side `supabaseAdmin.storage.from("fonts").download(...)` returns raw bytes.
-
-This task only guarantees the bytes are stored; the burn-side hookup stays for a follow-up.
-
-## Files
-
-- **New** `src/components/admin/FontsManager.tsx` — dropzone + list + row actions (dropzone patterned after `PremiereDropzone`).
-- **Edit** `src/routes/admin.tsx` — mount `<FontsManager />` as a new `Card` section.
-- **Migration** — add three RLS policies on `storage.objects` for bucket `fonts` (insert/select/delete for `authenticated`, folder-scoped to `auth.uid()`).
+The existing "authenticated can read fonts bucket" policy from the Fonts Manager migration already lets the Cutter download the file bytes.
 
 ## Verification
 
-- Upload a `.ttf`, then in the shell: `psql -c "select storage_path, size_bytes from fonts order by created_at desc limit 1"` and check that `size_bytes` matches the local file; download via signed URL and `sha256sum` the bytes vs the original to prove full content is stored (not just the name).
 - `tsgo --noEmit` clean.
+- Upload a distinctive font (e.g. a display face) via Admin → Fonts, select it in Cutter's Font dropdown, burn a short clip: rendered subtitles visibly use the uploaded typeface (not Noto Sans).
+- Switching back to "Default" and burning again renders in Noto Sans.
 
 ## Out of scope
 
-- Wiring uploaded fonts into the burn pipeline (`operations.ts` still uses the bundled Noto Sans).
-- Non-admin upload access, font previews, per-project font selection.
+- Live preview / `LiveSubtitleOverlay` / `CuePreview` using the custom font (they render in the browser via CSS, not via libass). That's a separate task — this plan only fixes the burned output.
+- Per-cue font overrides, font weight/italic controls, font subsetting.
