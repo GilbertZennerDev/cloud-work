@@ -347,10 +347,65 @@ function sanitizeFontFile(name: string) {
   return name.replace(/[^A-Za-z0-9._-]+/g, "_");
 }
 
+/**
+ * Extract the actual font family name from a TTF/OTF SFNT `name` table.
+ * libass matches ASS `Fontname` against this internal name, NOT the file
+ * name or whatever we stored in the DB. Returns null for unsupported
+ * containers (woff/woff2) or malformed files — caller should fall back.
+ */
+function readFontFamilyName(bytes: Uint8Array): string | null {
+  try {
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const scaler = dv.getUint32(0);
+    // Accept TrueType (0x00010000, 'true', 'ttcf') and OpenType ('OTTO').
+    const isSfnt =
+      scaler === 0x00010000 || scaler === 0x74727565 /* 'true' */ ||
+      scaler === 0x4f54544f /* 'OTTO' */;
+    if (!isSfnt) return null;
+    const numTables = dv.getUint16(4);
+    let nameOff = 0, nameLen = 0;
+    for (let i = 0; i < numTables; i++) {
+      const o = 12 + i * 16;
+      const tag = String.fromCharCode(bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]);
+      if (tag === "name") { nameOff = dv.getUint32(o + 8); nameLen = dv.getUint32(o + 12); break; }
+    }
+    if (!nameOff || !nameLen) return null;
+    const count = dv.getUint16(nameOff + 2);
+    const strOff = nameOff + dv.getUint16(nameOff + 4);
+    let family: string | null = null;
+    let preferred: string | null = null;
+    for (let i = 0; i < count; i++) {
+      const rec = nameOff + 6 + i * 12;
+      const platformId = dv.getUint16(rec);
+      const nameID = dv.getUint16(rec + 6);
+      const len = dv.getUint16(rec + 8);
+      const off = dv.getUint16(rec + 10);
+      if (nameID !== 1 && nameID !== 16) continue;
+      const slice = bytes.subarray(strOff + off, strOff + off + len);
+      let str: string;
+      if (platformId === 3 || platformId === 0) {
+        // UTF-16BE
+        let s = "";
+        for (let j = 0; j + 1 < slice.length; j += 2) {
+          s += String.fromCharCode((slice[j] << 8) | slice[j + 1]);
+        }
+        str = s;
+      } else {
+        str = String.fromCharCode(...slice);
+      }
+      if (nameID === 16 && !preferred) preferred = str;
+      else if (nameID === 1 && !family) family = str;
+    }
+    return preferred || family;
+  } catch {
+    return null;
+  }
+}
+
 async function ensureFont(
   ffmpeg: Awaited<ReturnType<typeof getFFmpeg>>,
   custom?: CustomFont,
-): Promise<{ fontFile?: string }> {
+): Promise<{ fontFile?: string; realFamily?: string }> {
   if (!baseFontLoadedFor.has(ffmpeg)) {
     try {
       await ffmpeg.createDir("/fonts");
@@ -369,33 +424,27 @@ async function ensureFont(
     loaded = new Set();
     customFontsLoadedFor.set(ffmpeg, loaded);
   }
-  if (loaded.has(key)) return { fontFile: filename };
   let bytes = custom.bytes;
+  if (!loaded.has(key)) {
+    if (!bytes) {
+      const { supabase } = await import("@/integrations/supabase/client");
+      console.log(`[ensureFont] downloading "${custom.family}" from storage: ${custom.storagePath}`);
+      const { data, error } = await supabase.storage.from("fonts").download(custom.storagePath);
+      if (error || !data) throw new Error(`Failed to download font: ${error?.message ?? "unknown"}`);
+      bytes = new Uint8Array(await data.arrayBuffer());
+    }
+    await ffmpeg.writeFile(filename, bytes);
+    loaded.add(key);
+  }
+  // Always parse bytes (fetch from FS if we skipped download) to learn real family.
   if (!bytes) {
-    const { supabase } = await import("@/integrations/supabase/client");
-    console.log(`[ensureFont] downloading "${custom.family}" from storage: ${custom.storagePath}`);
-    const t0 = performance.now();
-    const { data, error } = await supabase.storage.from("fonts").download(custom.storagePath);
-    if (error || !data) throw new Error(`Failed to download font: ${error?.message ?? "unknown"}`);
-    bytes = new Uint8Array(await data.arrayBuffer());
-    console.log(
-      `[ensureFont] downloaded "${custom.family}" (${custom.format}) — ${bytes.byteLength} bytes in ${Math.round(performance.now() - t0)}ms`,
-    );
-  } else {
-    console.log(`[ensureFont] using pre-fetched bytes for "${custom.family}" — ${bytes.byteLength} bytes`);
+    try { bytes = (await ffmpeg.readFile(filename)) as Uint8Array; } catch {}
   }
-  await ffmpeg.writeFile(filename, bytes);
-  try {
-    const written = await ffmpeg.readFile(filename);
-    const writtenLen =
-      typeof written === "string" ? written.length : (written as Uint8Array).byteLength;
-    console.log(`[ensureFont] wrote ${filename} to ffmpeg FS — ${writtenLen} bytes`);
-  } catch (e) {
-    console.warn(`[ensureFont] could not verify written file ${filename}:`, e);
-  }
-  loaded.add(key);
-  return { fontFile: filename };
+  const realFamily = bytes ? readFontFamilyName(bytes) ?? undefined : undefined;
+  console.log(`[ensureFont] "${custom.family}" -> internal family: "${realFamily ?? "(unknown)"}"`);
+  return { fontFile: filename, realFamily };
 }
+
 
 
 
@@ -552,41 +601,51 @@ export async function burnSubtitles(
 
 
   await ffmpeg.writeFile(inputName, await fetchFile(video));
-  await ffmpeg.writeFile(subsName, new TextEncoder().encode(assText));
-  const { fontFile } = await ensureFont(ffmpeg, customFont);
+  const { fontFile, realFamily: customRealFamily } = await ensureFont(ffmpeg, customFont);
 
-  // Bundle a built-in font (e.g. Lato) into /fonts and use FontFile= for it,
-  // so libass never has to guess. ffmpeg.wasm has no system fonts.
-  let builtinFontFile: string | undefined;
+  // Bundle a built-in font (e.g. Lato) into /fonts. ffmpeg.wasm has no system
+  // fonts, so anything other than Noto Sans must be shipped in.
+  let builtinRealFamily: string | undefined;
   if (!fontFile && builtinFontName && BUILTIN_FONTS[builtinFontName]) {
     const spec = BUILTIN_FONTS[builtinFontName];
     const filename = `/fonts/${sanitizeFontFile(builtinFontName)}.${spec.format}`;
     let loaded = customFontsLoadedFor.get(ffmpeg);
     if (!loaded) { loaded = new Set(); customFontsLoadedFor.set(ffmpeg, loaded); }
     const key = `builtin::${builtinFontName}`;
+    let bytes: Uint8Array | undefined;
     if (!loaded.has(key)) {
       const t0 = performance.now();
-      const bytes = await fetchFile(spec.url);
+      bytes = await fetchFile(spec.url);
       await ffmpeg.writeFile(filename, bytes);
       console.log(`[burnSubtitles] bundled built-in "${builtinFontName}" — ${bytes.byteLength} bytes in ${Math.round(performance.now() - t0)}ms`);
       loaded.add(key);
+    } else {
+      try { bytes = (await ffmpeg.readFile(filename)) as Uint8Array; } catch {}
     }
-    builtinFontFile = filename;
+    builtinRealFamily = bytes ? readFontFamilyName(bytes) ?? undefined : undefined;
+    console.log(`[burnSubtitles] built-in "${builtinFontName}" -> internal family: "${builtinRealFamily ?? "(unknown)"}"`);
   }
 
-  const sf = scaleFilter(perf);
-  let subFilter: string;
-  if (fontFile) {
-    subFilter = `subtitles=${subsName}:fontsdir=/fonts:force_style='FontFile=${fontFile}'`;
-  } else if (builtinFontFile) {
-    subFilter = `subtitles=${subsName}:fontsdir=/fonts:force_style='FontFile=${builtinFontFile}'`;
-  } else if (builtinFontName) {
-    subFilter = `subtitles=${subsName}:fontsdir=/fonts:force_style='FontName=${builtinFontName}'`;
-  } else {
-    subFilter = `subtitles=${subsName}:fontsdir=/fonts`;
+  // libass matches ASS `Fontname` against the font's INTERNAL family name
+  // (from its SFNT `name` table), not the file name. If our DB label or the
+  // caller's builtin name doesn't match, patch the ASS Style line so libass
+  // resolves the font correctly via fontsdir. `FontFile=` is NOT a valid ASS
+  // style attribute — libass silently ignores it, which is why prior attempts
+  // rendered the fallback (Noto Sans) or nothing at all.
+  const targetFamily = customRealFamily ?? builtinRealFamily ?? undefined;
+  let patchedAss = assText;
+  if (targetFamily) {
+    patchedAss = patchedAss.replace(
+      /^(Style:\s*Default,)[^,]*,/m,
+      `$1${targetFamily},`,
+    );
   }
+  await ffmpeg.writeFile(subsName, new TextEncoder().encode(patchedAss));
+
+  const sf = scaleFilter(perf);
+  const subFilter = `subtitles=${subsName}:fontsdir=/fonts`;
   const vf = sf ? `${sf},${subFilter}` : subFilter;
-  console.log(`[burnSubtitles] vf =`, vf, `customFont =`, customFont?.family, `builtinFont =`, builtinFontName);
+  console.log(`[burnSubtitles] vf =`, vf, `targetFamily =`, targetFamily, `customFont =`, customFont?.family, `builtinFont =`, builtinFontName);
   try {
     // NOTE: Do NOT combine `-map 0:v:0` with `-vf` here. When the video
     // stream is explicitly mapped, ffmpeg.wasm's simple-filter (`-vf`) path
@@ -602,6 +661,7 @@ export async function burnSubtitles(
       "-movflags", "+faststart",
       "-y", outputName,
     ]);
+
 
 
     return await readOutputFile(ffmpeg, outputName, "Subtitle burn-in");
