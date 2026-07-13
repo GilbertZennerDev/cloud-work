@@ -526,13 +526,14 @@ function Dashboard() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("fonts")
-        .select("id,family,format,is_default")
+        .select("id,family,format,is_default,storage_path")
         .eq("status", "ready")
         .order("family", { ascending: true });
       if (error) throw error;
-      return data as { id: string; family: string; format: string; is_default: boolean }[];
+      return data as { id: string; family: string; format: string; is_default: boolean; storage_path: string }[];
     },
   });
+
   useEffect(() => {
     if (subFont !== "default" || !fontsListQuery.data) return;
     const def = fontsListQuery.data.find((f) => f.is_default);
