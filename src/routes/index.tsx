@@ -1387,6 +1387,7 @@ function Dashboard() {
         setProgress,
         { lowPerf: effLowPerf, maxHeight: effMaxHeight },
         customFontRow ? { family: customFontRow.family, storagePath: customFontRow.storage_path, format: customFontRow.format } : undefined,
+        !customFontRow && fontFamily ? fontFamily : undefined,
       );
 
       checkCancel();
