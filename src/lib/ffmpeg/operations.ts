@@ -512,6 +512,7 @@ export async function burnSubtitles(
   assText: string,
   onP?: ProgressCb,
   perf: PerfOptions = {},
+  customFont?: CustomFont,
 ): Promise<Uint8Array> {
   const ffmpeg = await getFFmpeg();
   const off = onP ? onProgress(ffmpeg, onP) : () => {};
@@ -519,7 +520,8 @@ export async function burnSubtitles(
   const inputName = `burn_input_${token}.mp4`;
   const subsName = `subs_${token}.ass`;
   const outputName = `burned_${token}.mp4`;
-  await ensureFont(ffmpeg);
+  await ensureFont(ffmpeg, customFont);
+
   await ffmpeg.writeFile(inputName, await fetchFile(video));
   await ffmpeg.writeFile(subsName, new TextEncoder().encode(assText));
   const sf = scaleFilter(perf);
