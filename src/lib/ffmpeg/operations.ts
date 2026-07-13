@@ -315,6 +315,16 @@ const FONT_URL =
   "https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSans/hinted/ttf/NotoSans-Regular.ttf";
 const FONT_FAMILY = "Noto Sans";
 
+/** Built-in fonts we bundle into the ffmpeg.wasm virtual FS on demand. */
+const BUILTIN_FONTS: Record<string, { url: string; format: string }> = {
+  Lato: {
+    url: "https://raw.githubusercontent.com/google/fonts/main/ofl/lato/Lato-Regular.ttf",
+    format: "ttf",
+  },
+};
+
+export const BUILTIN_FONT_FAMILIES = Object.keys(BUILTIN_FONTS);
+
 export interface CustomFont {
   /** ASS Fontname — must match the font's actual family name. */
   family: string;
