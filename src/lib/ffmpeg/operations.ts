@@ -541,10 +541,13 @@ export async function burnSubtitles(
 
   await ffmpeg.writeFile(inputName, await fetchFile(video));
   await ffmpeg.writeFile(subsName, new TextEncoder().encode(assText));
+  const { fontFile } = await ensureFont(ffmpeg, customFont);
   const sf = scaleFilter(perf);
-  const vf = sf
-    ? `${sf},ass=${subsName}:fontsdir=/fonts`
+  const subFilter = fontFile
+    ? `subtitles=${subsName}:fontsdir=/fonts:force_style='FontFile=${fontFile}'`
     : `ass=${subsName}:fontsdir=/fonts`;
+  const vf = sf ? `${sf},${subFilter}` : subFilter;
+  console.log(`[burnSubtitles] vf =`, vf, `customFont =`, customFont?.family);
   try {
     // NOTE: Do NOT combine `-map 0:v:0` with `-vf` here. When the video
     // stream is explicitly mapped, ffmpeg.wasm's simple-filter (`-vf`) path
@@ -560,6 +563,7 @@ export async function burnSubtitles(
       "-movflags", "+faststart",
       "-y", outputName,
     ]);
+
 
     return await readOutputFile(ffmpeg, outputName, "Subtitle burn-in");
   } finally {
