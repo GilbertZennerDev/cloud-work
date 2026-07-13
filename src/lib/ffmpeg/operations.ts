@@ -530,6 +530,7 @@ export async function burnSubtitles(
   onP?: ProgressCb,
   perf: PerfOptions = {},
   customFont?: CustomFont,
+  builtinFontName?: string,
 ): Promise<Uint8Array> {
   const ffmpeg = await getFFmpeg();
   const off = onP ? onProgress(ffmpeg, onP) : () => {};
@@ -544,11 +545,16 @@ export async function burnSubtitles(
   await ffmpeg.writeFile(subsName, new TextEncoder().encode(assText));
   const { fontFile } = await ensureFont(ffmpeg, customFont);
   const sf = scaleFilter(perf);
-  const subFilter = fontFile
-    ? `subtitles=${subsName}:fontsdir=/fonts:force_style='FontFile=${fontFile}'`
-    : `ass=${subsName}:fontsdir=/fonts`;
+  let subFilter: string;
+  if (fontFile) {
+    subFilter = `subtitles=${subsName}:fontsdir=/fonts:force_style='FontFile=${fontFile}'`;
+  } else if (builtinFontName) {
+    subFilter = `subtitles=${subsName}:fontsdir=/fonts:force_style='FontName=${builtinFontName}'`;
+  } else {
+    subFilter = `subtitles=${subsName}:fontsdir=/fonts`;
+  }
   const vf = sf ? `${sf},${subFilter}` : subFilter;
-  console.log(`[burnSubtitles] vf =`, vf, `customFont =`, customFont?.family);
+  console.log(`[burnSubtitles] vf =`, vf, `customFont =`, customFont?.family, `builtinFont =`, builtinFontName);
   try {
     // NOTE: Do NOT combine `-map 0:v:0` with `-vf` here. When the video
     // stream is explicitly mapped, ffmpeg.wasm's simple-filter (`-vf`) path
