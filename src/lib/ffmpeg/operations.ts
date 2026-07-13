@@ -459,17 +459,19 @@ function wrapTextForAss(text: string, fontSize: number, maxWidthPx: number): str
     .join("\n");
 }
 
-export function cuesToAss(cues: AssCue[], style: SubtitleStyle): string {
+export function cuesToAss(cues: AssCue[], style: SubtitleStyle, fontFamily?: string): string {
   const w = Math.max(1, Math.round(style.videoWidth));
   const h = Math.max(1, Math.round(style.videoHeight));
   const outline = Math.max(0, style.outline);
   const defaultX = Math.round((style.xPct / 100) * w);
   const defaultY = Math.round((style.yPct / 100) * h);
+  const family = fontFamily && fontFamily.trim() ? fontFamily : FONT_FAMILY;
 
   // Alignment=5 => middle-center anchor, so \pos(x,y) places the centre of the text at (x,y).
   const styleLine =
-    `Style: Default,${FONT_FAMILY},${style.fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H64000000,` +
+    `Style: Default,${family},${style.fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H64000000,` +
     `1,0,0,0,100,100,0,0,1,${outline},0,5,0,0,0,1`;
+
 
   // Match the preview: captions in <CuePreview>/<LiveSubtitleOverlay> wrap
   // inside a box that's ~92% of the video width. libass with WrapStyle=2
