@@ -1394,6 +1394,7 @@ function Dashboard() {
         yPct: subY,
         videoWidth: dims.width,
         videoHeight: dims.height,
+        ...look,
       }, fontFamily);
       const subbed = await burnSubtitles(
         clip,
