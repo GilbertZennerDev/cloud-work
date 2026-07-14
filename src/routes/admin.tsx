@@ -251,7 +251,11 @@ function GroupDetail({ groupId, onDeleted }: { groupId: string; onDeleted: () =>
       setTempPassword("");
       invalidateAll();
     },
-    onError: (e) => toast.error((e as Error).message),
+    onError: (e) => {
+      console.error("addUserToGroup failed", e);
+      const msg = (e as Error)?.message || "Failed to add user";
+      toast.error(msg, { duration: 10000 });
+    },
   });
 
   const removeMember = useMutation({
