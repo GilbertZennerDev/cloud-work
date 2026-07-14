@@ -448,7 +448,26 @@ async function ensureFont(
 
 
 
-export interface SubtitleStyle {
+export interface SubtitleLook {
+  /** Fill colour, hex #RRGGBB. Default #FFFFFF. */
+  primaryColor?: string;
+  /** Outline colour, hex #RRGGBB. Default #000000. */
+  outlineColor?: string;
+  /** Shadow offset in px. 0 disables shadow. */
+  shadow?: number;
+  /** Shadow / back-box colour, hex #RRGGBB. Default #000000. */
+  shadowColor?: string;
+  /** "outline" = classic contour, "box" = opaque background box (ASS BorderStyle=3). */
+  borderStyle?: "outline" | "box";
+  bold?: boolean;
+  italic?: boolean;
+  /** Fade-in/out duration in ms (applied to every cue). 0 disables. */
+  fadeMs?: number;
+  /** Pop-in scale animation on cue entry. */
+  popIn?: boolean;
+}
+
+export interface SubtitleStyle extends SubtitleLook {
   /** Font size in pixels (relative to source video height in ASS PlayRes) */
   fontSize: number;
   /** Outline (black contour) thickness in pixels. 0 disables. */
@@ -461,6 +480,19 @@ export interface SubtitleStyle {
   videoWidth: number;
   /** Video height in pixels (used as ASS PlayResY). */
   videoHeight: number;
+}
+
+/** Convert `#RRGGBB` to ASS `&H00BBGGRR` (alpha 00 = opaque). Accepts short/long forms. */
+export function hexToAssColor(hex: string | undefined, fallback = "#FFFFFF", alpha = 0): string {
+  const raw = (hex ?? fallback).trim().replace(/^#/, "");
+  let r = "FF", g = "FF", b = "FF";
+  if (/^[0-9a-f]{3}$/i.test(raw)) {
+    r = raw[0] + raw[0]; g = raw[1] + raw[1]; b = raw[2] + raw[2];
+  } else if (/^[0-9a-f]{6}$/i.test(raw)) {
+    r = raw.slice(0, 2); g = raw.slice(2, 4); b = raw.slice(4, 6);
+  }
+  const aa = Math.max(0, Math.min(255, alpha)).toString(16).padStart(2, "0").toUpperCase();
+  return `&H${aa}${b.toUpperCase()}${g.toUpperCase()}${r.toUpperCase()}`;
 }
 
 function assTime(seconds: number): string {
@@ -543,10 +575,23 @@ export function cuesToAss(cues: AssCue[], style: SubtitleStyle, fontFamily?: str
   const defaultY = Math.round((style.yPct / 100) * h);
   const family = fontFamily && fontFamily.trim() ? fontFamily : FONT_FAMILY;
 
+  const primary = hexToAssColor(style.primaryColor, "#FFFFFF");
+  const outlineCol = hexToAssColor(style.outlineColor, "#000000");
+  const isBox = style.borderStyle === "box";
+  // For boxed style the "back" colour is the opaque box behind the text.
+  // For outline style keep the classic semi-transparent shadow fill.
+  const backCol = isBox
+    ? hexToAssColor(style.shadowColor, "#000000", 0x20)
+    : hexToAssColor(style.shadowColor, "#000000", 0x64);
+  const shadowPx = Math.max(0, Math.round(style.shadow ?? 0));
+  const bold = style.bold === false ? 0 : 1; // default bold to match previous look
+  const italic = style.italic ? 1 : 0;
+  const borderStyleCode = isBox ? 3 : 1;
+
   // Alignment=5 => middle-center anchor, so \pos(x,y) places the centre of the text at (x,y).
   const styleLine =
-    `Style: Default,${family},${style.fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H64000000,` +
-    `1,0,0,0,100,100,0,0,1,${outline},0,5,0,0,0,1`;
+    `Style: Default,${family},${style.fontSize},${primary},&H000000FF,${outlineCol},${backCol},` +
+    `${bold},${italic},0,0,100,100,0,0,${borderStyleCode},${outline},${shadowPx},5,0,0,0,1`;
 
 
   // Match the preview: captions in <CuePreview>/<LiveSubtitleOverlay> wrap
@@ -554,13 +599,22 @@ export function cuesToAss(cues: AssCue[], style: SubtitleStyle, fontFamily?: str
   // never auto-wraps, so we pre-wrap here and let it honour our \N breaks.
   const maxWidthPx = Math.round(w * 0.92);
 
+  const fadeMs = Math.max(0, Math.round(style.fadeMs ?? 0));
+  const popIn = !!style.popIn;
+
   const events = cues
     .filter((c) => c.end > c.start && c.text.trim().length > 0)
     .map((c) => {
       const px = typeof c.xPct === "number" ? Math.round((c.xPct / 100) * w) : defaultX;
       const py = typeof c.yPct === "number" ? Math.round((c.yPct / 100) * h) : defaultY;
       const wrapped = wrapTextForAss(c.text, style.fontSize, maxWidthPx);
-      return `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Default,,0,0,0,,{\\pos(${px},${py})}${escapeAssText(wrapped)}`;
+      const overrides: string[] = [`\\pos(${px},${py})`];
+      if (popIn) {
+        // Start slightly smaller and grow to 100% over 140ms.
+        overrides.push(`\\fscx82\\fscy82\\t(0,140,\\fscx100\\fscy100)`);
+      }
+      if (fadeMs > 0) overrides.push(`\\fad(${fadeMs},${fadeMs})`);
+      return `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Default,,0,0,0,,{${overrides.join("")}}${escapeAssText(wrapped)}`;
     })
     .join("\n");
 

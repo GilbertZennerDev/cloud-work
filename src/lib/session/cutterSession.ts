@@ -11,6 +11,7 @@
  */
 import { get, set, del, keys } from "idb-keyval";
 import type { SrtCue } from "@/lib/subtitles/luxasrToSrt";
+import type { SubtitleLook } from "@/lib/ffmpeg/operations";
 
 export interface CutterSessionState {
   version: 1;
@@ -31,6 +32,10 @@ export interface CutterSessionState {
   audioOffsetSec: number;
   burnIn: boolean;
   lockAxis?: "free" | "x" | "y";
+  /** Optional colour/effect look. Older sessions omit; caller fills defaults. */
+  look?: SubtitleLook;
+  /** Auto-download final output when the pipeline completes. */
+  autoDownload?: boolean;
 }
 
 interface CachedBlob {

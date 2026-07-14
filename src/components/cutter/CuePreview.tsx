@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, LockKeyhole } from "lucide-react";
 import { getFrameAt } from "@/lib/cutter/frameSnapshots";
 import { cn } from "@/lib/utils";
+import type { SubtitleLook } from "@/lib/ffmpeg/operations";
+import { renderSubtitleStyle } from "@/lib/cutter/subtitleLookStyle";
 
 export type LockAxis = "free" | "x" | "y";
 
@@ -26,6 +28,8 @@ interface Props {
   videoWidth?: number;
   /** If false, defers snapshot until the element is visible. */
   eager?: boolean;
+  /** Colour/effect look — mirrors the burned output. */
+  look?: SubtitleLook;
 }
 
 /**
@@ -36,7 +40,7 @@ interface Props {
  */
 export function CuePreview({
   videoSrc, time, xPct, yPct, fontSize, outline, text, lockAxis = "free", onChange,
-  size = "inline", videoWidth = 1280, eager = false,
+  size = "inline", videoWidth = 1280, eager = false, look,
 }: Props) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [frameUrl, setFrameUrl] = useState<string | null>(null);
@@ -112,14 +116,8 @@ export function CuePreview({
   const scale = boxWidth / Math.max(1, videoWidth);
   const previewFont = Math.max(8, Math.round(fontSize * scale));
   const previewOutline = Math.max(0, outline * scale);
-  const shadow = previewOutline > 0
-    ? Array.from({ length: 8 }, (_, i) => {
-        const a = (i * Math.PI) / 4;
-        const dx = Math.cos(a) * previewOutline;
-        const dy = Math.sin(a) * previewOutline;
-        return `${dx.toFixed(2)}px ${dy.toFixed(2)}px 0 #000`;
-      }).join(", ")
-    : "none";
+  const previewShadow = Math.max(0, (look?.shadow ?? 0) * scale);
+  const { textStyle, boxStyle } = renderSubtitleStyle(look, previewOutline, previewShadow);
 
   const displayText = (text || "").trim() || "…";
 
@@ -154,19 +152,22 @@ export function CuePreview({
         </div>
       )}
 
-      <span
-        className="absolute font-sans font-semibold text-white text-center leading-tight whitespace-pre-line pointer-events-none px-2"
+      <div
+        className="absolute text-center leading-tight whitespace-pre-line pointer-events-none px-2 font-sans"
         style={{
           left: `${xPct}%`,
           top: `${yPct}%`,
           transform: "translate(-50%, -50%)",
           fontSize: `${previewFont}px`,
-          textShadow: shadow,
           maxWidth: "92%",
         }}
       >
-        {displayText}
-      </span>
+        {boxStyle ? (
+          <span style={{ ...boxStyle, ...textStyle }}>{displayText}</span>
+        ) : (
+          <span style={textStyle}>{displayText}</span>
+        )}
+      </div>
       <div className="absolute h-px w-full bg-white/10 pointer-events-none" style={{ top: `${yPct}%` }} />
       <div className="absolute w-px h-full bg-white/10 pointer-events-none" style={{ left: `${xPct}%` }} />
 

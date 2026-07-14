@@ -52,10 +52,13 @@ import {
   remuxTsToMp4,
   cuesToAss,
   getVideoDimensions,
+  type SubtitleLook,
 } from "@/lib/ffmpeg/operations";
 import { onFfmpegLog, cancelFFmpeg } from "@/lib/ffmpeg/client";
 import { luxasrJsonToCues, cuesToSrt, type SrtCue } from "@/lib/subtitles/luxasrToSrt";
 import { shortenCues } from "@/lib/subtitles/shortenSrt";
+import { SUBTITLE_LOOK_PRESETS, DEFAULT_SUBTITLE_LOOK } from "@/lib/cutter/subtitleLookPresets";
+import { Copy, Sparkles, Bold, Italic, Wand2 } from "lucide-react";
 import {
   ensureSharedRecorder,
   snapshotSharedRecorderDelta,
@@ -552,6 +555,16 @@ function Dashboard() {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [lockAxis, setLockAxis] = useState<"free" | "x" | "y">("free");
   const [editorCueIdx, setEditorCueIdx] = useState<number | null>(null);
+  const [look, setLook] = useState<SubtitleLook>(DEFAULT_SUBTITLE_LOOK);
+  const [autoDownload, setAutoDownload] = useState(true);
+  const patchLook = useCallback((patch: Partial<SubtitleLook>) => setLook((l) => ({ ...l, ...patch })), []);
+  const applyPreset = useCallback((id: string) => {
+    const p = SUBTITLE_LOOK_PRESETS.find((x) => x.id === id);
+    if (!p) return;
+    setLook(p.look);
+    if (typeof p.outline === "number") setSubOutline(p.outline);
+    toast.success(`Applied "${p.label}" look`);
+  }, []);
 
   const perfState = usePerfTier();
   const perf = perfState.profile;
@@ -823,6 +836,8 @@ function Dashboard() {
     setAudioOffsetSec(saved.audioOffsetSec);
     setBurnIn(saved.burnIn);
     if (saved.lockAxis) setLockAxis(saved.lockAxis);
+    if (saved.look) setLook({ ...DEFAULT_SUBTITLE_LOOK, ...saved.look });
+    if (typeof saved.autoDownload === "boolean") setAutoDownload(saved.autoDownload);
   };
 
   const acceptRestore = async () => {
@@ -865,6 +880,8 @@ function Dashboard() {
         audioOffsetSec,
         burnIn,
         lockAxis,
+        look,
+        autoDownload,
       }).catch(() => {});
     }, 800);
     return () => {
@@ -872,7 +889,7 @@ function Dashboard() {
     };
   }, [
     sessionKey, file, rawCues, cues, selectedCues, mode, segments,
-    subX, subY, fontSize, subOutline, maxSentences, maxChars, audioOffsetSec, burnIn, lockAxis,
+    subX, subY, fontSize, subOutline, maxSentences, maxChars, audioOffsetSec, burnIn, lockAxis, look, autoDownload,
   ]);
 
   const resetSession = async () => {
@@ -1123,6 +1140,7 @@ function Dashboard() {
           yPct: subY,
           videoWidth: dims.width,
           videoHeight: dims.height,
+          ...look,
         }, fontFamily);
         const subbed = await burnSubtitles(
           workingVideo,
@@ -1380,6 +1398,7 @@ function Dashboard() {
         yPct: subY,
         videoWidth: dims.width,
         videoHeight: dims.height,
+        ...look,
       }, fontFamily);
       const subbed = await burnSubtitles(
         clip,
@@ -1424,6 +1443,36 @@ function Dashboard() {
     a.download = name;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  /** Derive a sensible base name from the source title/file for downloads. */
+  const outputBase = useMemo(() => {
+    const raw = sourceTitle ?? file?.name ?? "clip";
+    return raw.replace(/\.[^./]+$/, "").replace(/[\/\\:*?"<>|]+/g, "_").slice(0, 80) || "clip";
+  }, [sourceTitle, file]);
+  const outName = (suffix: string, ext: string) => `${outputBase}__${suffix}.${ext}`;
+
+  // Auto-download the final artifact when the pipeline finishes, if enabled.
+  const lastAutoDlRef = useRef<Blob | null>(null);
+  useEffect(() => {
+    if (!autoDownload || stage !== "done") return;
+    const final = subbedBlob ?? clipBlob;
+    if (!final || final === lastAutoDlRef.current) return;
+    lastAutoDlRef.current = final;
+    const name = subbedBlob ? outName("subbed", "mp4") : outName("cut", "mp4");
+    download(final, name);
+    toast.success(`Downloaded ${name}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage, subbedBlob, clipBlob, autoDownload]);
+
+  const copySrt = async () => {
+    if (!srtText) return;
+    try {
+      await navigator.clipboard.writeText(srtText);
+      toast.success("SRT copied to clipboard");
+    } catch {
+      toast.error("Clipboard blocked — use the download button");
+    }
   };
 
   const clipPreviewUrl = useMemo(() => (clipBlob ? URL.createObjectURL(clipBlob) : null), [clipBlob]);
@@ -1503,8 +1552,49 @@ function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSeg, sourcePreviewUrl]);
 
+  // Page-wide drag & drop for video files.
+  const [pageDragOver, setPageDragOver] = useState(false);
+  const acceptDroppedFile = useCallback((f: File | undefined) => {
+    if (!f) return;
+    if (!f.type.startsWith("video/") && !/\.(ts|mkv|mp4|mov|m4v|webm|m2ts)$/i.test(f.name)) {
+      toast.error("Not a video file");
+      return;
+    }
+    setFile(f);
+    setSourceTitle(null);
+    setRecordingId(null);
+    handledRecordingRef.current = null;
+    if (search.recording) navigate({ to: "/", search: {}, replace: true });
+    toast.success(`Loaded ${f.name}`);
+  }, [navigate, search.recording]);
+
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div
+      className="min-h-screen bg-background text-foreground relative"
+      onDragOver={(e) => {
+        if (Array.from(e.dataTransfer?.types ?? []).includes("Files")) {
+          e.preventDefault();
+          setPageDragOver(true);
+        }
+      }}
+      onDragLeave={(e) => {
+        // Only clear when leaving the outer container itself.
+        if (e.target === e.currentTarget) setPageDragOver(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setPageDragOver(false);
+        acceptDroppedFile(e.dataTransfer?.files?.[0]);
+      }}
+    >
+      {pageDragOver && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-primary/20 backdrop-blur-sm pointer-events-none">
+          <div className="rounded-lg border-2 border-dashed border-primary bg-background/90 px-8 py-6 text-center">
+            <Upload className="h-8 w-8 mx-auto text-primary mb-2" />
+            <p className="text-sm font-medium">Drop video anywhere to load</p>
+          </div>
+        </div>
+      )}
       <header className="border-b">
         <div className="mx-auto max-w-7xl px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -1603,6 +1693,11 @@ function Dashboard() {
               {file && (
                 <p className="text-xs text-muted-foreground mt-2">
                   {(file.size / (1024 * 1024)).toFixed(1)} MB · {file.type || "unknown"}
+                  {sourceDims && (
+                    <span className="ml-2 font-mono">
+                      {sourceDims.width}×{sourceDims.height}
+                    </span>
+                  )}
                   {sourceTitle && sourceTitle !== file.name && (
                     <span className="ml-2 font-mono opacity-60">{file.name}</span>
                   )}
@@ -1850,6 +1945,7 @@ function Dashboard() {
                                     videoWidth={sourceDims?.width}
                                     lockAxis={lockAxis}
                                     onChange={(patch) => updateCuePos(c.index, patch)}
+                                    look={look}
                                   />
                                 ) : (
                                   <SubtitlePreview
@@ -1859,6 +1955,7 @@ function Dashboard() {
                                     outline={subOutline}
                                     sample={c.text.split(/\r?\n/)[0].slice(0, 60) || "…"}
                                     onChange={(x, y) => updateCuePos(c.index, { xPct: x, yPct: y })}
+                                    look={look}
                                   />
                                 )}
                                 <div className="grid grid-cols-2 gap-2">
@@ -1946,6 +2043,171 @@ function Dashboard() {
                 <Slider min={14} max={64} step={1} value={[fontSize]} onValueChange={(v) => setFontSize(v[0])} />
               </div>
 
+              {/* Style presets — one-click looks. */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <Label className="flex items-center gap-1.5">
+                    <Sparkles className="h-3.5 w-3.5" /> Style presets
+                  </Label>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {SUBTITLE_LOOK_PRESETS.map((p) => {
+                    const active = p.look.primaryColor === look.primaryColor
+                      && p.look.borderStyle === look.borderStyle
+                      && !!p.look.popIn === !!look.popIn
+                      && (p.look.fadeMs ?? 0) === (look.fadeMs ?? 0);
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => applyPreset(p.id)}
+                        className={cn(
+                          "text-left rounded-md border px-3 py-2 hover:bg-muted/40 transition-colors",
+                          active && "border-primary bg-primary/5",
+                        )}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="inline-block h-4 w-4 rounded-sm border border-black/20"
+                            style={{ backgroundColor: p.look.primaryColor }}
+                          />
+                          <span className="text-sm font-medium">{p.label}</span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">{p.hint}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Colors + text style */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs">Text color</Label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <input
+                      type="color"
+                      value={look.primaryColor ?? "#FFFFFF"}
+                      onChange={(e) => patchLook({ primaryColor: e.target.value })}
+                      className="h-8 w-10 rounded border cursor-pointer bg-transparent"
+                    />
+                    <Input
+                      value={look.primaryColor ?? "#FFFFFF"}
+                      onChange={(e) => patchLook({ primaryColor: e.target.value })}
+                      className="h-8 text-xs font-mono"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-xs">
+                    {look.borderStyle === "box" ? "Box color" : "Outline color"}
+                  </Label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <input
+                      type="color"
+                      value={(look.borderStyle === "box" ? look.shadowColor : look.outlineColor) ?? "#000000"}
+                      onChange={(e) => patchLook(
+                        look.borderStyle === "box"
+                          ? { shadowColor: e.target.value }
+                          : { outlineColor: e.target.value },
+                      )}
+                      className="h-8 w-10 rounded border cursor-pointer bg-transparent"
+                    />
+                    <Input
+                      value={(look.borderStyle === "box" ? look.shadowColor : look.outlineColor) ?? "#000000"}
+                      onChange={(e) => patchLook(
+                        look.borderStyle === "box"
+                          ? { shadowColor: e.target.value }
+                          : { outlineColor: e.target.value },
+                      )}
+                      className="h-8 text-xs font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <ToggleGroup
+                  type="single"
+                  size="sm"
+                  value={look.borderStyle ?? "outline"}
+                  onValueChange={(v) => v && patchLook({ borderStyle: v as "outline" | "box" })}
+                >
+                  <ToggleGroupItem value="outline" aria-label="Outline">Outline</ToggleGroupItem>
+                  <ToggleGroupItem value="box" aria-label="Box">Box</ToggleGroupItem>
+                </ToggleGroup>
+                <div className="h-4 w-px bg-border mx-1" />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={look.bold !== false ? "default" : "outline"}
+                  className="h-8 w-8 p-0"
+                  onClick={() => patchLook({ bold: look.bold === false })}
+                  title="Bold"
+                >
+                  <Bold className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={look.italic ? "default" : "outline"}
+                  className="h-8 w-8 p-0"
+                  onClick={() => patchLook({ italic: !look.italic })}
+                  title="Italic"
+                >
+                  <Italic className="h-3.5 w-3.5" />
+                </Button>
+                <div className="ml-auto text-[11px] text-muted-foreground">
+                  Shadow {look.shadow ?? 0}px
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs">Shadow</Label>
+                  <span className="text-xs text-muted-foreground">{look.shadow ?? 0}px</span>
+                </div>
+                <Slider
+                  min={0}
+                  max={6}
+                  step={1}
+                  value={[look.shadow ?? 0]}
+                  onValueChange={(v) => patchLook({ shadow: v[0] })}
+                />
+              </div>
+
+              {/* Effects */}
+              <div className="rounded-md border bg-muted/20 p-3 space-y-3">
+                <div className="flex items-center gap-1.5">
+                  <Wand2 className="h-3.5 w-3.5" />
+                  <span className="text-xs font-medium">Effects</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label htmlFor="popin" className="text-xs">Pop-in on entry</Label>
+                    <p className="text-[11px] text-muted-foreground">Scale from 82% → 100% over 140ms</p>
+                  </div>
+                  <Switch
+                    id="popin"
+                    checked={!!look.popIn}
+                    onCheckedChange={(v) => patchLook({ popIn: v })}
+                  />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs">Fade in/out</Label>
+                    <span className="text-xs text-muted-foreground">{look.fadeMs ?? 0} ms</span>
+                  </div>
+                  <Slider
+                    min={0}
+                    max={500}
+                    step={20}
+                    value={[look.fadeMs ?? 0]}
+                    onValueChange={(v) => patchLook({ fadeMs: v[0] })}
+                  />
+                </div>
+              </div>
+
               <div>
                 <p className="text-xs text-muted-foreground mb-2">
                   Drag the caption on the frame. Per-cue tweaks live in the transcript list below.
@@ -1965,6 +2227,7 @@ function Dashboard() {
                       setSubY(y);
                     }}
                     onCueChange={(idx, patch) => updateCuePos(idx, patch)}
+                    look={look}
                   />
                 ) : (
                   <SubtitlePreview
@@ -1976,6 +2239,7 @@ function Dashboard() {
                       setSubX(x);
                       setSubY(y);
                     }}
+                    look={look}
                   />
                 )}
                 <Collapsible open={posControlsOpen} onOpenChange={setPosControlsOpen} className="mt-3">
@@ -2388,7 +2652,13 @@ function Dashboard() {
 
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Outputs</CardTitle>
+              <CardTitle className="text-base flex items-center justify-between">
+                <span>Outputs</span>
+                <label className="flex items-center gap-2 text-xs font-normal text-muted-foreground cursor-pointer">
+                  <Switch checked={autoDownload} onCheckedChange={setAutoDownload} />
+                  Auto-download when done
+                </label>
+              </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               {clipPreviewUrl && (
@@ -2405,34 +2675,43 @@ function Dashboard() {
               )}
 
               <div className="flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" disabled={!clipBlob} onClick={() => download(clipBlob, "clip.mp4")}>
-                  <Download className="h-4 w-4 mr-2" /> clip.mp4
+                <Button variant="outline" size="sm" disabled={!clipBlob} onClick={() => download(clipBlob, outName("cut", "mp4"))}>
+                  <Download className="h-4 w-4 mr-2" /> {outName("cut", "mp4")}
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
                   disabled={!audioBlob}
-                  onClick={() => download(audioBlob, "clip.mp3")}
+                  onClick={() => download(audioBlob, outName("audio", "mp3"))}
                 >
-                  <Download className="h-4 w-4 mr-2" /> clip.mp3
+                  <Download className="h-4 w-4 mr-2" /> {outName("audio", "mp3")}
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
                   disabled={!srtText}
                   onClick={() =>
-                    download(srtText ? new Blob([srtText], { type: "text/plain" }) : null, "subtitles.srt")
+                    download(srtText ? new Blob([srtText], { type: "text/plain" }) : null, outName("subs", "srt"))
                   }
                 >
-                  <Download className="h-4 w-4 mr-2" /> subtitles.srt
+                  <Download className="h-4 w-4 mr-2" /> {outName("subs", "srt")}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!srtText}
+                  onClick={copySrt}
+                  title="Copy SRT to clipboard"
+                >
+                  <Copy className="h-4 w-4 mr-2" /> Copy SRT
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
                   disabled={!subbedBlob}
-                  onClick={() => download(subbedBlob, "clip_subbed.mp4")}
+                  onClick={() => download(subbedBlob, outName("subbed", "mp4"))}
                 >
-                  <Download className="h-4 w-4 mr-2" /> clip_subbed.mp4
+                  <Download className="h-4 w-4 mr-2" /> {outName("subbed", "mp4")}
                 </Button>
               </div>
 
@@ -2507,6 +2786,7 @@ function Dashboard() {
         fontSize={fontSize}
         outline={subOutline}
         videoWidth={sourceDims?.width}
+        look={look}
         lockAxis={lockAxis}
         onLockAxisChange={setLockAxis}
         onChange={(patch) => { if (editorCueIdx !== null) updateCuePos(editorCueIdx, patch); }}
@@ -2578,7 +2858,12 @@ function PipelineStepper({
                 ) : (
                   <Icon className="h-3.5 w-3.5" />
                 )}
-                <span>{s.label}</span>
+                <span>
+                  {s.label}
+                  {isActive && progress > 0 && progress < 1 && (
+                    <span className="ml-1 tabular-nums opacity-80">{Math.round(progress * 100)}%</span>
+                  )}
+                </span>
               </div>
               {i < active.length - 1 && <div className="w-4 h-px bg-border" />}
             </div>

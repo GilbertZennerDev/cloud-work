@@ -25,6 +25,7 @@ interface Props {
   onReset: () => void;
   onApplyToFollowing: (xPct: number, yPct: number) => void;
   onApplyToAll: (xPct: number, yPct: number) => void;
+  look?: import("@/lib/ffmpeg/operations").SubtitleLook;
 }
 
 /**
@@ -34,7 +35,7 @@ interface Props {
  */
 export function CuePositionDialog({
   open, onOpenChange, cue, videoSrc, defaultX, defaultY, fontSize, outline, videoWidth, lockAxis, onLockAxisChange,
-  onChange, onReset, onApplyToFollowing, onApplyToAll,
+  onChange, onReset, onApplyToFollowing, onApplyToAll, look,
 }: Props) {
   const cx = cue?.xPct ?? defaultX;
   const cy = cue?.yPct ?? defaultY;
@@ -93,6 +94,7 @@ export function CuePositionDialog({
               onChange={onChange}
               size="large"
               eager
+              look={look}
             />
           ) : (
             <div className="rounded-md border bg-muted/20 aspect-video grid place-items-center text-sm text-muted-foreground">
