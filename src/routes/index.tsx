@@ -1693,6 +1693,11 @@ function Dashboard() {
               {file && (
                 <p className="text-xs text-muted-foreground mt-2">
                   {(file.size / (1024 * 1024)).toFixed(1)} MB · {file.type || "unknown"}
+                  {sourceDims && (
+                    <span className="ml-2 font-mono">
+                      {sourceDims.width}×{sourceDims.height}
+                    </span>
+                  )}
                   {sourceTitle && sourceTitle !== file.name && (
                     <span className="ml-2 font-mono opacity-60">{file.name}</span>
                   )}
