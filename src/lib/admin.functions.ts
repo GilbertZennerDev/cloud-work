@@ -208,7 +208,7 @@ export const addUserToGroup = createServerFn({ method: "POST" })
         groupId: z.string().uuid(),
         email: z.string().email(),
         mode: z.enum(["invite", "password"]).default("invite"),
-        password: z.string().min(8).max(72).optional(),
+        password: z.string().min(1).max(72).optional(),
       })
       .parse(i),
   )
