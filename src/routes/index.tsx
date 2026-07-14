@@ -1899,6 +1899,7 @@ function Dashboard() {
                                     videoWidth={sourceDims?.width}
                                     lockAxis={lockAxis}
                                     onChange={(patch) => updateCuePos(c.index, patch)}
+                                    look={look}
                                   />
                                 ) : (
                                   <SubtitlePreview
@@ -1908,6 +1909,7 @@ function Dashboard() {
                                     outline={subOutline}
                                     sample={c.text.split(/\r?\n/)[0].slice(0, 60) || "…"}
                                     onChange={(x, y) => updateCuePos(c.index, { xPct: x, yPct: y })}
+                                    look={look}
                                   />
                                 )}
                                 <div className="grid grid-cols-2 gap-2">
