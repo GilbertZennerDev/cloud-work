@@ -1790,33 +1790,16 @@ function Dashboard() {
                 </p>
               ) : (
                 <>
-                  <div className="flex items-center justify-between mb-2 text-xs">
-                    <div className="flex items-center gap-2">
-                      <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px]" onClick={selectAllCues}>
-                        Select all
-                      </Button>
-                      <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px]" onClick={clearSelectedCues}>
-                        Clear
-                      </Button>
-                      <span className="text-muted-foreground">
-                        {selectedCues.size} / {cues.length} selected
-                      </span>
-                    </div>
-                    <Button
-                      size="sm"
-                      disabled={!file || isRunning || selectedCues.size === 0}
-                      onClick={cutFromSelectedCues}
-                    >
-                      {isRunning && (stage === "cutting" || stage === "burning") ? (
-                        <>
-                          <Loader2 className="h-3 w-3 mr-2 animate-spin" /> Cutting…
-                        </>
-                      ) : (
-                        <>
-                          <Scissors className="h-3 w-3 mr-2" /> Cut selected ({selectedCues.size})
-                        </>
-                      )}
+                  <div className="flex items-center gap-2 mb-2 text-xs">
+                    <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px]" onClick={selectAllCues}>
+                      Select all
                     </Button>
+                    <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px]" onClick={clearSelectedCues}>
+                      Clear
+                    </Button>
+                    <span className="text-muted-foreground">
+                      {selectedCues.size} / {cues.length} selected
+                    </span>
                   </div>
                   <ScrollArea className="h-72 rounded-md border">
                     <ul className="divide-y">
