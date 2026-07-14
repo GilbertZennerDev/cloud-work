@@ -83,7 +83,7 @@ import { LiveSubtitleOverlay } from "@/components/cutter/LiveSubtitleOverlay";
 import { CuePreview } from "@/components/cutter/CuePreview";
 import { CuePositionDialog } from "@/components/cutter/CuePositionDialog";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Maximize2, LockKeyhole, MoveHorizontal, MoveVertical, SplitSquareHorizontal, Merge, RefreshCw } from "lucide-react";
+import { Maximize2, LockKeyhole, MoveHorizontal, MoveVertical, SplitSquareHorizontal, Merge, RefreshCw, ChevronsUpDown } from "lucide-react";
 import { SyncCalibrator } from "@/components/cutter/SyncCalibrator";
 import { PerfSelector } from "@/components/cutter/PerfSelector";
 import { usePerfTier } from "@/lib/perf/usePerfTier";
