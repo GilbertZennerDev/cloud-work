@@ -2887,6 +2887,28 @@ function Dashboard() {
         }}
       />
 
+      <AlertDialog open={rangePending !== null} onOpenChange={(v) => { if (!v) setRangePending(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Select range of blocks?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {rangePending && (
+                <>
+                  This will add <span className="font-mono tabular font-semibold text-foreground">{rangePending.toAdd.length}</span>{" "}
+                  block{rangePending.toAdd.length === 1 ? "" : "s"} to your selection, from{" "}
+                  <span className="font-mono tabular">#{rangePending.from}</span> to{" "}
+                  <span className="font-mono tabular">#{rangePending.to}</span>.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmRangeSelect}>Select range</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <footer className="mx-auto max-w-7xl px-6 py-8 text-xs text-muted-foreground">
         Processing runs entirely in your browser via ffmpeg.wasm. Only the extracted audio is sent to LuxASR (uni.lu)
         for transcription. Keep this tab open while jobs run.
