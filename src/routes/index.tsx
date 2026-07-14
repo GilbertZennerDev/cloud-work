@@ -2899,8 +2899,8 @@ function Dashboard() {
                 <>
                   This will add <span className="font-mono tabular font-semibold text-foreground">{rangePending.toAdd.length}</span>{" "}
                   block{rangePending.toAdd.length === 1 ? "" : "s"} to your selection, from{" "}
-                  <span className="font-mono tabular">#{rangePending.from}</span> to{" "}
-                  <span className="font-mono tabular">#{rangePending.to}</span>.
+                  <span className="font-mono tabular">#{rangePending.from + 1}</span> to{" "}
+                  <span className="font-mono tabular">#{rangePending.to + 1}</span>.
                 </>
               )}
             </AlertDialogDescription>
