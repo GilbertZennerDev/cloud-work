@@ -25,6 +25,7 @@ interface Props {
   onReset: () => void;
   onApplyToFollowing: (xPct: number, yPct: number) => void;
   onApplyToAll: (xPct: number, yPct: number) => void;
+  look?: import("@/lib/ffmpeg/operations").SubtitleLook;
 }
 
 /**
