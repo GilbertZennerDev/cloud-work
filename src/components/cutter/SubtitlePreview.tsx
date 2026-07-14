@@ -17,7 +17,7 @@ interface Props {
  * xPct/yPct = centre of the text, in % of the box.
  */
 export function SubtitlePreview({
-  xPct, yPct, fontSize, outline, onChange, sample = "Beispill Ennertitlen",
+  xPct, yPct, fontSize, outline, onChange, sample = "Beispill Ennertitlen", look,
 }: Props) {
   const boxRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
@@ -51,17 +51,9 @@ export function SubtitlePreview({
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
   };
 
-  // Approximate the ASS outline (in source-video px) by scaling to the preview box.
-  // Assumes preview represents a ~720-tall video; good enough for a visual guide.
   const previewOutline = Math.max(0, outline);
-  const shadow = previewOutline > 0
-    ? Array.from({ length: 8 }, (_, i) => {
-        const a = (i * Math.PI) / 4;
-        const dx = Math.cos(a) * previewOutline;
-        const dy = Math.sin(a) * previewOutline;
-        return `${dx.toFixed(2)}px ${dy.toFixed(2)}px 0 #000`;
-      }).join(", ")
-    : "none";
+  const previewShadow = Math.max(0, look?.shadow ?? 0);
+  const { textStyle, boxStyle } = renderSubtitleStyle(look, previewOutline, previewShadow);
 
   return (
     <div
@@ -74,18 +66,21 @@ export function SubtitlePreview({
       role="application"
       aria-label="Subtitle position preview — drag to reposition"
     >
-      <span
-        className="absolute font-sans font-semibold text-white text-center leading-tight whitespace-nowrap pointer-events-none"
+      <div
+        className="absolute text-center leading-tight whitespace-nowrap pointer-events-none font-sans"
         style={{
           left: `${xPct}%`,
           top: `${yPct}%`,
           transform: "translate(-50%, -50%)",
           fontSize: `${fontSize}px`,
-          textShadow: shadow,
         }}
       >
-        {sample}
-      </span>
+        {boxStyle ? (
+          <span style={{ ...boxStyle, ...textStyle }}>{sample}</span>
+        ) : (
+          <span style={textStyle}>{sample}</span>
+        )}
+      </div>
       <div
         className="absolute h-px w-full bg-white/10 pointer-events-none"
         style={{ top: `${yPct}%` }}
