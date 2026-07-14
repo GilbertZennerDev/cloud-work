@@ -41,6 +41,16 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useQuery } from "@tanstack/react-query";
 
 import { parseTimeToSeconds, formatSeconds } from "@/lib/subtitles/parseTime";
@@ -73,7 +83,7 @@ import { LiveSubtitleOverlay } from "@/components/cutter/LiveSubtitleOverlay";
 import { CuePreview } from "@/components/cutter/CuePreview";
 import { CuePositionDialog } from "@/components/cutter/CuePositionDialog";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Maximize2, LockKeyhole, MoveHorizontal, MoveVertical, SplitSquareHorizontal, Merge, RefreshCw } from "lucide-react";
+import { Maximize2, LockKeyhole, MoveHorizontal, MoveVertical, SplitSquareHorizontal, Merge, RefreshCw, ChevronsUpDown } from "lucide-react";
 import { SyncCalibrator } from "@/components/cutter/SyncCalibrator";
 import { PerfSelector } from "@/components/cutter/PerfSelector";
 import { usePerfTier } from "@/lib/perf/usePerfTier";
@@ -594,6 +604,8 @@ function Dashboard() {
   const [rawCues, setRawCues] = useState<SrtCue[]>([]);
   const [selectedCues, setSelectedCues] = useState<Set<number>>(new Set());
   const [reasrIdx, setReasrIdx] = useState<number | null>(null);
+  const [rangeAnchor, setRangeAnchor] = useState<number | null>(null);
+  const [rangePending, setRangePending] = useState<{ from: number; to: number; toAdd: number[] } | null>(null);
 
   const toggleCue = (idx: number) =>
     setSelectedCues((prev) => {
@@ -603,7 +615,41 @@ function Dashboard() {
       return n;
     });
   const selectAllCues = () => setSelectedCues(new Set(cues.map((c) => c.index)));
-  const clearSelectedCues = () => setSelectedCues(new Set());
+  const clearSelectedCues = () => {
+    setSelectedCues(new Set());
+    setRangeAnchor(null);
+  };
+  const onRangeCheck = (clickedIdx: number) => {
+    const anchor =
+      rangeAnchor ??
+      (selectedCues.size > 0 ? Math.min(...Array.from(selectedCues)) : cues[0]?.index ?? clickedIdx);
+    const from = Math.min(anchor, clickedIdx);
+    const to = Math.max(anchor, clickedIdx);
+    const inRange = cues.filter((c) => c.index >= from && c.index <= to).map((c) => c.index);
+    const toAdd = inRange.filter((i) => !selectedCues.has(i));
+    if (toAdd.length <= 1) {
+      if (toAdd.length === 1) {
+        setSelectedCues((prev) => {
+          const n = new Set(prev);
+          n.add(toAdd[0]);
+          return n;
+        });
+      }
+      setRangeAnchor(clickedIdx);
+      return;
+    }
+    setRangePending({ from, to, toAdd });
+  };
+  const confirmRangeSelect = () => {
+    if (!rangePending) return;
+    setSelectedCues((prev) => {
+      const n = new Set(prev);
+      for (const i of rangePending.toAdd) n.add(i);
+      return n;
+    });
+    setRangeAnchor(rangePending.to);
+    setRangePending(null);
+  };
   const updateCuePos = (idx: number, patch: { xPct?: number | undefined; yPct?: number | undefined }) =>
     setCues((prev) => prev.map((c) => (c.index === idx ? { ...c, ...patch } : c)));
   const resetCuePos = (idx: number) =>
@@ -1813,6 +1859,26 @@ function Dashboard() {
                         return (
                           <li key={c.index} className="p-2 hover:bg-muted/40 group">
                             <div className="flex items-center gap-2 mb-1">
+                              <button
+                                type="button"
+                                onClick={() => onRangeCheck(c.index)}
+                                title={
+                                  rangeAnchor === null
+                                    ? "Set as range anchor"
+                                    : rangeAnchor === c.index
+                                    ? "Range anchor"
+                                    : `Select range from #${rangeAnchor} to #${c.index}`
+                                }
+                                aria-label={`Select range up to block ${c.index}`}
+                                className={cn(
+                                  "h-4 w-4 rounded-sm border border-dashed flex items-center justify-center transition-colors",
+                                  rangeAnchor === c.index
+                                    ? "border-accent bg-accent/20 text-accent"
+                                    : "border-muted-foreground/40 text-muted-foreground hover:border-accent hover:text-accent",
+                                )}
+                              >
+                                <ChevronsUpDown className="h-3 w-3" />
+                              </button>
                               <Checkbox
                                 checked={isSelected}
                                 onCheckedChange={() => toggleCue(c.index)}
@@ -2820,6 +2886,28 @@ function Dashboard() {
           toast.success("Position applied to all cues");
         }}
       />
+
+      <AlertDialog open={rangePending !== null} onOpenChange={(v) => { if (!v) setRangePending(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Select range of blocks?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {rangePending && (
+                <>
+                  This will add <span className="font-mono tabular font-semibold text-foreground">{rangePending.toAdd.length}</span>{" "}
+                  block{rangePending.toAdd.length === 1 ? "" : "s"} to your selection, from{" "}
+                  <span className="font-mono tabular">#{rangePending.from}</span> to{" "}
+                  <span className="font-mono tabular">#{rangePending.to}</span>.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmRangeSelect}>Select range</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <footer className="mx-auto max-w-7xl px-6 py-8 text-xs text-muted-foreground">
         Processing runs entirely in your browser via ffmpeg.wasm. Only the extracted audio is sent to LuxASR (uni.lu)
