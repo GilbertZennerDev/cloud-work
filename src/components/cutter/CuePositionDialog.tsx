@@ -94,6 +94,7 @@ export function CuePositionDialog({
               onChange={onChange}
               size="large"
               eager
+              look={look}
             />
           ) : (
             <div className="rounded-md border bg-muted/20 aspect-video grid place-items-center text-sm text-muted-foreground">
