@@ -1552,8 +1552,49 @@ function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSeg, sourcePreviewUrl]);
 
+  // Page-wide drag & drop for video files.
+  const [pageDragOver, setPageDragOver] = useState(false);
+  const acceptDroppedFile = useCallback((f: File | undefined) => {
+    if (!f) return;
+    if (!f.type.startsWith("video/") && !/\.(ts|mkv|mp4|mov|m4v|webm|m2ts)$/i.test(f.name)) {
+      toast.error("Not a video file");
+      return;
+    }
+    setFile(f);
+    setSourceTitle(null);
+    setRecordingId(null);
+    handledRecordingRef.current = null;
+    if (search.recording) navigate({ to: "/", search: {}, replace: true });
+    toast.success(`Loaded ${f.name}`);
+  }, [navigate, search.recording]);
+
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div
+      className="min-h-screen bg-background text-foreground relative"
+      onDragOver={(e) => {
+        if (Array.from(e.dataTransfer?.types ?? []).includes("Files")) {
+          e.preventDefault();
+          setPageDragOver(true);
+        }
+      }}
+      onDragLeave={(e) => {
+        // Only clear when leaving the outer container itself.
+        if (e.target === e.currentTarget) setPageDragOver(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setPageDragOver(false);
+        acceptDroppedFile(e.dataTransfer?.files?.[0]);
+      }}
+    >
+      {pageDragOver && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-primary/20 backdrop-blur-sm pointer-events-none">
+          <div className="rounded-lg border-2 border-dashed border-primary bg-background/90 px-8 py-6 text-center">
+            <Upload className="h-8 w-8 mx-auto text-primary mb-2" />
+            <p className="text-sm font-medium">Drop video anywhere to load</p>
+          </div>
+        </div>
+      )}
       <header className="border-b">
         <div className="mx-auto max-w-7xl px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
